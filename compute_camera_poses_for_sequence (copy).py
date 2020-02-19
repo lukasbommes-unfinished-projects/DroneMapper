@@ -31,32 +31,26 @@ bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
 fast = cv2.FastFeatureDetector_create(threshold=12)
 num_ret_points = 3000
 tolerance = 0.1
-num_matches = 3000
-
-lk_params = dict( winSize  = (21, 21),
-                  maxLevel = 3,
-                  criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
+num_matches = 50
 
 
-def extract_kp_des(current_frame, fast, orb):
+def extract_kp_des(current_frame, fast, orb, draw=True):
     kp = fast.detect(current_frame, None)
     kp = sorted(kp, key = lambda x:x.response, reverse=True)
     kp = ssc(kp, num_ret_points, tolerance, current_frame.shape[1], current_frame.shape[0])
     kp, des = orb.compute(current_frame, kp)
-    # good features to track lead to cleaner tracks, but much more noisy pose estimates
-    #kp = cv2.goodFeaturesToTrack(current_frame, **feature_params)
-    #kp = cv2.KeyPoint_convert(kp)
-    #kp, des = orb.compute(current_frame, kp)
-    return kp, des
+    if draw:
+        current_frame = cv2.drawKeypoints(current_frame, kp, None, flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
+    return kp, des, current_frame
 
 
 def match(last_keyframe, current_frame, bf, last_des, des, last_kp, kp, draw=True):
     matches = bf.match(last_des, des)
     matches = sorted(matches, key = lambda x:x.distance)
     print("Found {} matches of current frame with last frame".format(len(matches)))
+    # get matched keypoints
     last_pts = np.array([last_kp[m.queryIdx].pt for m in matches[:num_matches]]).reshape(1, -1, 2)
     current_pts = np.array([kp[m.trainIdx].pt for m in matches[:num_matches]]).reshape(1, -1, 2)
-    match_frame = np.zeros_like(current_frame)
     if draw:
         match_frame = cv2.drawMatches(last_keyframe, last_kp, current_frame, kp, matches[:num_matches], None, matchColor=(0, 0, 0), flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
     return matches, last_pts, current_pts, match_frame
@@ -70,6 +64,18 @@ cv2.namedWindow("match_frame", cv2.WINDOW_NORMAL)
 cv2.resizeWindow("match_frame", 1600, 900)
 
 step_wise = True
+
+# 3D plot
+# fig = plt.figure()
+# ax = fig.add_subplot(111, projection='3d')
+# #ax.scatter(last_pts.reshape(-1, 2)[:, 0], last_pts.reshape(-1, 2)[:, 1], np.zeros(last_pts.shape[1]))
+# #ax.scatter(current_pts.reshape(-1, 2)[:, 0], current_pts.reshape(-1, 2)[:, 1], np.zeros(current_pts.shape[1]))
+# ax.scatter(triangulatedPoints[:, 0], triangulatedPoints[:, 1], triangulatedPoints[:, 2])
+# ax.set_xlabel("x")
+# ax.set_ylabel("y")
+# ax.set_zlabel("z")
+# plt.legend(["frame1", "frame2", "triangulated"])
+# plt.show()
 
 # discard intial part of video
 [cap.read() for i in range(1000)]
@@ -98,55 +104,32 @@ ax2 = fig2.add_subplot(111)
 ax2.set_xlabel("x")
 ax2.set_ylabel("y")
 
-previous_frame = None
-previous_kp = None
-detect_interval = 10
-
 
 while(True):
 
     print("frame", frame_idx)
 
     retc, current_frame = cap.read()
-    current_frame = cv2.cvtColor(current_frame, cv2.COLOR_BGR2GRAY)
     current_frame = cv2.remap(current_frame, mapx, mapy, cv2.INTER_CUBIC)
 
+    kp, des, current_frame = extract_kp_des(current_frame, fast, orb, draw=True)
+    print("Found {} keypoint in current frame".format(len(kp)))
+
     if frame_idx == 0:
-        kp, des = extract_kp_des(current_frame, fast, orb)
-        print("Found {} keypoint in current frame".format(len(kp)))
-        previous_frame = current_frame
-        previous_kp = kp
         last_kf["frame"] = current_frame
         last_kf["key_points"] = kp
         last_kf["descriptors"] = des
         frame_idx += 1
         continue
 
-    if frame_idx % detect_interval == 0:
-        kp, des = extract_kp_des(current_frame, fast, orb)
-        print("Found {} keypoint in current frame".format(len(kp)))
-        vis_current_frame = cv2.drawKeypoints(np.copy(current_frame), kp, None, flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
-    else:
-        print("performing tracking")
-        p0 = np.float32(cv2.KeyPoint_convert(previous_kp)).reshape(-1, 1, 2)
-        p1, _st, _err = cv2.calcOpticalFlowPyrLK(previous_frame, current_frame, p0, None, **lk_params)
-        p0r, _st, _err = cv2.calcOpticalFlowPyrLK(current_frame, previous_frame, p1, None, **lk_params)  # back-tracking
-        d = abs(p0-p0r).reshape(-1, 2).max(-1)
-        good = d < 1
-        kp = cv2.KeyPoint_convert(p1[good])
-        kp, des = orb.compute(current_frame, kp)
-        print(len(kp))
-        vis_current_frame = cv2.drawKeypoints(np.copy(current_frame), kp, None, flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
-
     matches, last_pts, current_pts, match_frame = match(last_kf["frame"], current_frame, bf, last_kf["descriptors"], des, last_kf["key_points"], kp, draw=True)
 
     # recover camera pose from point correspondences
     essential_mat, _ = cv2.findEssentialMat(last_pts, current_pts, camera_matrix, method=cv2.RANSAC)
     retval, R, t, mask = cv2.recoverPose(essential_mat, last_pts, current_pts, camera_matrix)
-    if retval >= 0.25*current_pts.shape[1]: # more than 50 % of the points should be valid for the pose to be recovered properly
-        Rs.append(R)
-        ts.append(t)
-        map_points.append(current_pts)#[mask.astype(np.bool)])
+    Rs.append(R)
+    ts.append(t)
+    map_points.append(current_pts)
 
     print("R", R)
     print("t", t)
@@ -154,10 +137,10 @@ while(True):
 
     plot_basis(ax1, R, t.reshape(3,))
 
-    #ax2.scatter(last_pts.reshape(-1, 2)[:, 0], last_pts.reshape(-1, 2)[:, 1])
-    #ax2.scatter(current_pts.reshape(-1, 2)[:, 0], current_pts.reshape(-1, 2)[:, 1])
+    ax2.scatter(last_pts.reshape(-1, 2)[:, 0], last_pts.reshape(-1, 2)[:, 1])
+    ax2.scatter(current_pts.reshape(-1, 2)[:, 0], current_pts.reshape(-1, 2)[:, 1])
 
-    cv2.imshow("current_frame", vis_current_frame)
+    cv2.imshow("current_frame", current_frame)
     if last_kf["frame"] is not None:
         cv2.imshow("last_frame", last_kf["frame"])
     if match_frame is not None:
@@ -185,17 +168,14 @@ while(True):
     # first compute threshold
 
     # update last infos for next iteration (ONLY DO THIS WHEN THRESHOLD IS EXCEEDED)
-    if frame_idx % 20 == 19:
-        last_kf["frame"] = current_frame
-        last_kf["key_points"] = kp
-        last_kf["descriptors"] = des
+    #last_kf["frame"] = current_frame
+    #last_kf["key_points"] = kp
+    #last_kf["descriptors"] = des
 
-    previous_frame = current_frame
-    previous_kp = kp
     frame_idx += 1
 
-    #if frame_idx == 100:
-    #    break
+    if frame_idx == 100:
+        break
 
 cap.release()
 cv2.destroyAllWindows()
