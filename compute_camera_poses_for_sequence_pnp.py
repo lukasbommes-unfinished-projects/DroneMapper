@@ -32,7 +32,7 @@ bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
 fast = cv2.FastFeatureDetector_create(threshold=12)
 num_ret_points = 3000
 tolerance = 0.1
-num_matches = 3000
+num_matches = 1000
 
 lk_params = dict( winSize  = (21, 21),
                   maxLevel = 3,
@@ -100,11 +100,9 @@ previous_kp = None
 detect_interval = 10
 
 
-
-
 def initialize(fast, orb, camera_matrix, kf_idx=[1000, 1050]):
     keyframes = []
-    map_points = []
+    map_points = np.empty((0, 3), dtype=np.float64)
     ret = False
     # get two frames with indices as specified in kf_idx
     kf_idx[1] = kf_idx[1] - kf_idx[0]
@@ -123,29 +121,42 @@ def initialize(fast, orb, camera_matrix, kf_idx=[1000, 1050]):
     # compute relative camera pose for second frame
     essential_mat, _ = cv2.findEssentialMat(last_pts, current_pts, camera_matrix, method=cv2.RANSAC)
     retval, R, t, mask = cv2.recoverPose(essential_mat, last_pts, current_pts, camera_matrix)
-    print(retval)
+    mask = mask.astype(np.bool).reshape(-1,)
     if retval >= 0.25*current_pts.shape[1]:
         ret = True
         print("init R", R)
         print("init t", t)
 
-        # triangulate initial point cloud based on matches and known camera pose
+        # remove outliers
+        last_pts = last_pts[:, mask, :]
+        current_pts = current_pts[:, mask, :]
 
+        # triangulate initial 3D point cloud
+        proj_matrix1 = np.array([[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0]])
+        proj_matrix2 = np.zeros((3, 4))
+        proj_matrix2[:, :3] = R
+        proj_matrix2[:, -1] = t.reshape(3,)
+        proj_matrix1 = np.matmul(camera_matrix, proj_matrix1)
+        proj_matrix2 = np.matmul(camera_matrix, proj_matrix2)
+        pts_3d = cv2.triangulatePoints(proj_matrix1, proj_matrix2, last_pts.T, current_pts.T).reshape(-1, 4)
+        pts_3d = cv2.convertPointsFromHomogeneous(pts_3d).reshape(-1, 3)
 
-        #map_points.append(triangulated_points)
+        # add triangulated points to map points
+        map_points = np.vstack((map_points, pts_3d))
 
         data = {
             "last_pts": last_pts,
             "current_pts": current_pts,
             "pose_R": R,
-            "pose_t": t
+            "pose_t": t,
+            "map_points": map_points
         }
         pickle.dump(data, open("data.pkl", "wb"))
 
-    return ret, keyframes
+    return ret, keyframes, map_points
 
 
-ret, keyframes = initialize(fast, orb, camera_matrix)
+ret, keyframes, map_points = initialize(fast, orb, camera_matrix)
 
 
 #
