@@ -4,3 +4,5 @@ __pycache__/
 *.SRT
 log.txt
 *.pkl
+
+g2o/docs
