@@ -6,3 +6,5 @@ log.txt
 *.pkl
 
 g2o/docs
+pyDBoW3
+pyg2o
