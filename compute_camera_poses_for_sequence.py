@@ -110,26 +110,62 @@ ax2.set_xlabel("x")
 ax2.set_ylabel("y")
 
 
-def initialize(fast, orb, camera_matrix, kf_idx=[1000, 1020]):
+# for testing remove the first part of the video where drone ascends
+#[cap.read() for _ in range(1000)]
+
+
+# TODO: Since a planar scene is observed, using the essential matrix is not optimal
+# higher accuracy can be achieved by estimating a homography (cv2.findHomography)
+# and decomposing the homography into possible rotations and translations (see experiments/Untitled9.ipynb)
+def initialize(fast, orb, camera_matrix, min_parallax=60.0):
+    """Initialize two keyframes, the camera poses and a 3D point cloud.
+
+    Args:
+        min_parallax (`float`): Threshold for the median distance of all
+            keypoint matches between the first keyframe (firs frame) and the
+            second key frame. Is used to determine which frame is the second
+            keyframe. This is needed to ensure enough parallax to recover
+            the camera poses and 3D points.
+    """
     keyframes = []
     map_points = []
     #map_points_mask = np.empty((0,), dtype=np.bool)
-    ret = False
-    # get two frames with indices as specified in kf_idx
-    kf_idx[1] = kf_idx[1] - kf_idx[0]
-    for i in range(2):
-        [cap.read() for i in range(kf_idx[i])]
+
+    # get first key frame
+    retc, frame = cap.read()
+    if not retc:
+        raise RuntimeError("Could not read the first camera frame.")
+    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    frame = cv2.remap(frame, mapx, mapy, cv2.INTER_CUBIC)
+    kp, des = extract_kp_des(frame, fast, orb)
+    keyframes.append({"frame": frame, "kp": kp, "des": des})
+
+    frame_idx_init = 0
+
+    while True:
         retc, frame = cap.read()
+        if not retc:
+            raise RuntimeError("Could not read next camera frame.")
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        frame = cv2.remap(frame, mapx, mapy, cv2.INTER_CUBIC)
+        frame = cv2.remap(frame, mapx, mapy, cv2.INTER_CUBIC)  # undistort frame
+
+        # extract keypoints and match with first key frame
         kp, des = extract_kp_des(frame, fast, orb)
-        keyframes.append({"frame": frame, "kp": kp, "des": des})
+        matches, last_pts, current_pts, last_des, current_des, match_frame = match(bf,
+            keyframes[0]["frame"], frame, keyframes[0]["des"],
+            des, keyframes[0]["kp"], kp, num_matches, draw=False)
 
-    matches, last_pts, current_pts, last_des, current_des, match_frame = match(bf,
-        keyframes[0]["frame"], keyframes[1]["frame"], keyframes[0]["des"],
-        keyframes[1]["des"], keyframes[0]["kp"], keyframes[1]["kp"], num_matches, draw=False)
+        # determine median distance between all matched feature points
+        median_dist = np.median(np.linalg.norm(last_pts.reshape(-1, 2)-current_pts.reshape(-1, 2), axis=1))
+        print(median_dist)
 
-    # update keypoints and descriptors to only those belonging to matches
+        # if distance exceeds threshold choose frame as second keyframe
+        if median_dist >= min_parallax:
+            keyframes.append({"frame": frame, "kp": kp, "des": des})
+            break
+
+        frame_idx_init += 1
+
     keyframes[0]["kp"] = cv2.KeyPoint_convert(last_pts)
     keyframes[0]["des"] = last_des
     keyframes[1]["kp"] = cv2.KeyPoint_convert(current_pts)
@@ -140,14 +176,8 @@ def initialize(fast, orb, camera_matrix, kf_idx=[1000, 1020]):
     retval, R, t, mask = cv2.recoverPose(essential_mat, last_pts, current_pts, camera_matrix)
     mask = mask.astype(np.bool).reshape(-1,)
     if retval >= 0.25*current_pts.shape[1]:
-        ret = True
         print("init R", R)
         print("init t", t)
-
-        # insert pose (in twist coordinates) of KF0 and KF1 into keyframes dict
-        # poses are w.r.t. KF0 which is the base coordinate system of the entire map
-        keyframes[0]["pose"] = np.zeros(6,)
-        keyframes[1]["pose"] = to_twist(R, t)
 
         # relative camera pose
         R1 = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]]).astype(np.float64)
@@ -155,39 +185,36 @@ def initialize(fast, orb, camera_matrix, kf_idx=[1000, 1020]):
         R2 = R.T
         t2 = -np.matmul(R.T, t.reshape(3,)).reshape(3,1)
 
-        # triangulate initial 3D point cloud
+        # insert pose (in twist coordinates) of KF0 and KF1 into keyframes dict
+        # poses are w.r.t. KF0 which is the base coordinate system of the entire map
+        keyframes[0]["pose"] = to_twist(R1, t1)
+        keyframes[1]["pose"] = to_twist(R2, t2)
+
+        # create projection matrices needed for triangulation of initial 3D point cloud
         proj_matrix1 = np.hstack([R1.T, -R1.T.dot(t1)])
         proj_matrix2 = np.hstack([R2.T, -R2.T.dot(t2)])
         proj_matrix1 = camera_matrix.dot(proj_matrix1)
         proj_matrix2 = camera_matrix.dot(proj_matrix2)
-        #print("current_pts before triangulate", current_pts, "len", current_pts.shape)
-        #print("last_pts before triangulate", last_pts, "len", last_pts.shape)
+
+        # triangulate initial 3D point cloud
         pts_3d = cv2.triangulatePoints(proj_matrix1, proj_matrix2, last_pts.reshape(-1, 2).T, current_pts.reshape(-1, 2).T).T
         pts_3d = cv2.convertPointsFromHomogeneous(pts_3d).reshape(-1, 3)
 
         # add triangulated points to map points
         map_points.append({"pts_3d": pts_3d, "mask": mask})  # map_points[0] stores 3D points w.r.t. KF0, mask demarks good points in the set
 
-        # data = {
-        #     "last_pts": last_pts,
-        #     "current_pts": current_pts,
-        #     "pose_R": R,
-        #     "pose_t": t,
-        #     "map_points": map_points
-        # }
-        # pickle.dump(data, open("data.pkl", "wb"))
-
         pickle.dump(cv2.KeyPoint_convert(keyframes[0]["kp"]), open("img_points_kf0.pkl", "wb"))
         pickle.dump(cv2.KeyPoint_convert(keyframes[1]["kp"]), open("img_points_kf1.pkl", "wb"))
 
-    return ret, keyframes, map_points
+        print("Initialization successful. Choose frames 0 and {} as key frames".format(frame_idx_init))
+
+    else:
+        raise RuntimeError("Could not recover intial camera pose based on selected keyframes. Try choosing a different pair of initial keyframes.")
+
+    return keyframes, map_points
 
 
-ret, keyframes, map_points = initialize(fast, orb, camera_matrix)
-
-if not ret:
-    raise RuntimeError(("Initialization failed. Could not recover pose. Make "
-        "sure enough parallax is present between the two keyframes."))
+keyframes, map_points = initialize(fast, orb, camera_matrix)
 
 
 previous_frame = None
@@ -257,6 +284,8 @@ while(True):
     pts_3d = map_points[-1]["pts_3d"]#[mask&good, :]  # corresponding 3D points in previous key frame
     print("current_pts before PnP", img_points, "len", img_points.shape)
     retval, rvec, tvec, inliers = cv2.solvePnPRansac(pts_3d.reshape(-1, 1, 3), img_points.reshape(-1, 1, 2), camera_matrix, None, reprojectionError=8, iterationsCount=100)
+    if not retval:
+        raise RuntimeError("Could not compute the camera pose for the new frame with solvePnP.")
     #print(retval)
     #print(inliers)
     R_rel = cv2.Rodrigues(rvec)[0].T
@@ -298,6 +327,8 @@ while(True):
             elif key == ord('a'):
                 step_wise = False
                 break
+
+    # TODO: extend below KF insertion decision based on travelled GPS distance and number of frames processed
 
     # decide when to insert a new keyframe based on a robust thresholding mechanism
     # the weights are chosen to make the difference more sensitive to changes in rotation and z-coordinate
