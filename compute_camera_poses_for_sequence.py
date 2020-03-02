@@ -1,12 +1,19 @@
+# import sys
+# sys.path.append('/home/lukas/Pangolin/build/src')
+#
+# import pypangolin as pango
+# from OpenGL.GL import *
+# from pytransform3d.rotations import axis_angle_from_matrix
+
 import numpy as np
 import cv2
 import pickle
 
 from ssc import ssc
 
-from matplotlib import pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
-from pytransform3d.rotations import *
+#from matplotlib import pyplot as plt
+#from mpl_toolkits.mplot3d import Axes3D
+#from pytransform3d.rotations import *
 
 # camera parameters
 w = 1920
@@ -82,7 +89,6 @@ def from_twist(twist):
     R, _ = cv2.Rodrigues(r)
     return R, t
 
-
 cv2.namedWindow("last_keyframe", cv2.WINDOW_NORMAL)
 cv2.resizeWindow("last_keyframe", 1600, 900)
 cv2.namedWindow("current_frame", cv2.WINDOW_NORMAL)
@@ -98,20 +104,12 @@ ts = []
 
 frame_idx = 0
 
-fig1 = plt.figure()
-ax1 = fig1.add_subplot(111, projection='3d')
-ax1.set_xlabel("x")
-ax1.set_ylabel("y")
-ax1.set_zlabel("z")
-
-fig2 = plt.figure()
-ax2 = fig2.add_subplot(111)
-ax2.set_xlabel("x")
-ax2.set_ylabel("y")
-
 
 # for testing remove the first part of the video where drone ascends
-#[cap.read() for _ in range(1000)]
+[cap.read() for _ in range(1000)]
+
+# TODO: It is a good idea to normalize the frame sbefore performing any operation
+#  this helps to account for changes in lighting, exposure, etc.
 
 
 # TODO: Since a planar scene is observed, using the essential matrix is not optimal
@@ -129,7 +127,6 @@ def initialize(fast, orb, camera_matrix, min_parallax=60.0):
     """
     keyframes = []
     map_points = []
-    #map_points_mask = np.empty((0,), dtype=np.bool)
 
     # get first key frame
     retc, frame = cap.read()
@@ -203,8 +200,8 @@ def initialize(fast, orb, camera_matrix, min_parallax=60.0):
         # add triangulated points to map points
         map_points.append({"pts_3d": pts_3d, "mask": mask})  # map_points[0] stores 3D points w.r.t. KF0, mask demarks good points in the set
 
-        pickle.dump(cv2.KeyPoint_convert(keyframes[0]["kp"]), open("img_points_kf0.pkl", "wb"))
-        pickle.dump(cv2.KeyPoint_convert(keyframes[1]["kp"]), open("img_points_kf1.pkl", "wb"))
+        #pickle.dump(cv2.KeyPoint_convert(keyframes[0]["kp"]), open("img_points_kf0.pkl", "wb"))
+        #pickle.dump(cv2.KeyPoint_convert(keyframes[1]["kp"]), open("img_points_kf1.pkl", "wb"))
 
         print("Initialization successful. Choose frames 0 and {} as key frames".format(frame_idx_init))
 
@@ -244,7 +241,7 @@ while(True):
 
     if frame_idx == 0:
         kp, des = extract_kp_des(current_frame, fast, orb)
-        print("Found {} keypoint in current frame".format(len(kp)))
+        print("Found {} keypoints in current frame".format(len(kp)))
         previous_frame = current_frame
         previous_kp = keyframes[-1]["kp"]
         vis_current_frame = cv2.drawKeypoints(np.copy(current_frame), previous_kp, None, flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
@@ -298,11 +295,6 @@ while(True):
     #pickle.dump(img_points, open("img_points_f0.pkl", "wb"))
     #pickle.dump(pts_3d, open("pts_3d.pkl", "wb"))
 
-    #plot_basis(ax1, R, t.reshape(3,))
-
-    #ax2.scatter(last_pts.reshape(-1, 2)[:, 0], last_pts.reshape(-1, 2)[:, 1])
-    #ax2.scatter(current_pts.reshape(-1, 2)[:, 0], current_pts.reshape(-1, 2)[:, 1])
-
     cv2.imshow("current_frame", vis_current_frame)
     #if last_kf["frame"] is not None:
     #    cv2.imshow("last_frame", last_kf["frame"])
@@ -328,7 +320,7 @@ while(True):
                 step_wise = False
                 break
 
-    # TODO: extend below KF insertion decision based on travelled GPS distance and number of frames processed
+    # TODO: extend below: KF insertion decision based on travelled GPS distance and number of frames processed
 
     # decide when to insert a new keyframe based on a robust thresholding mechanism
     # the weights are chosen to make the difference more sensitive to changes in rotation and z-coordinate
@@ -345,6 +337,16 @@ while(True):
     if current_dist >= pose_distance_threshold:
         print("########## insert new KF ###########")
 
+        pickle.dump(current_frame, open("new_keyframe.pkl", "wb"))
+        pickle.dump(cv2.KeyPoint_convert(kp), open("new_kp.pkl", "wb"))
+
+        keyframes[-1]["kp"] = cv2.KeyPoint_convert(keyframes[-1]["kp"])
+        pickle.dump(keyframes[-1], open("last_keyframe.pkl", "wb"))
+
+        break # for testing only
+
+        # extract new keypoints and compute ORB descriptors
+
     # update last infos for next iteration (ONLY DO THIS WHEN THRESHOLD IS EXCEEDED)
     #if frame_idx % 20 == 19:
     #    last_kf["frame"] = current_frame
@@ -360,8 +362,6 @@ while(True):
 
 cap.release()
 cv2.destroyAllWindows()
-
-plt.show()
 
 pickle.dump(Rs, open("Rs.pkl", "wb"))
 pickle.dump(ts, open("ts.pkl", "wb"))
