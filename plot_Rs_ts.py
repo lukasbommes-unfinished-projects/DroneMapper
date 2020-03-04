@@ -1,5 +1,6 @@
 import sys
 sys.path.append('/home/lukas/Pangolin/build/src')
+sys.path.append('/home/pangolin/build/src') # for inside docker container
 
 import pypangolin as pango
 from OpenGL.GL import *
@@ -108,6 +109,12 @@ def main():
             glEnd()
 
             glPopMatrix()
+
+        # TODO:
+        # draw lines between cameras
+        # visualize ground plane
+        # project images onto ground plane
+        # visualize local group
 
         pango.FinishFrame()
 

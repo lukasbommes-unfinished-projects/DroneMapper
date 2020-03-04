@@ -1,0 +1,4 @@
+include ../../README.rst
+include pyDBoW3/*.pyd
+include pyDBoW3/*.dll
+include pyDBoW3/pyDBoW3.so

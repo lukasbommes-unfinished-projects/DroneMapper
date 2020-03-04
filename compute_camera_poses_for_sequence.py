@@ -339,6 +339,7 @@ while(True):
 
         pickle.dump(current_frame, open("new_keyframe.pkl", "wb"))
         pickle.dump(cv2.KeyPoint_convert(kp), open("new_kp.pkl", "wb"))
+        pickle.dump(curent_pose, open("new_pose.pkl", "wb"))
 
         keyframes[-1]["kp"] = cv2.KeyPoint_convert(keyframes[-1]["kp"])
         pickle.dump(keyframes[-1], open("last_keyframe.pkl", "wb"))
