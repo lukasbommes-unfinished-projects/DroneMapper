@@ -166,14 +166,15 @@ def initialize(fast, orb, camera_matrix, min_parallax=60.0):
     pose_graph.add_edge(0, 1, matches=matches)
 
     # separately store the keypoints in matched order for tracking later
-    pose_graph.nodes[0]["kp_matched"] = last_pts.reshape(-1, 2) #cv2.KeyPoint_convert(last_pts)
-    pose_graph.nodes[1]["kp_matched"] = current_pts.reshape(-1, 2) #cv2.KeyPoint_convert(current_pts)
+    pose_graph.nodes[0]["kp_matched"] = last_pts.reshape(-1, 2)
+    pose_graph.nodes[1]["kp_matched"] = current_pts.reshape(-1, 2)
 
     # compute relative camera pose for second frame
     essential_mat, _ = cv2.findEssentialMat(last_pts.reshape(1, -1, 2), current_pts.reshape(1, -1, 2), camera_matrix, method=cv2.RANSAC)
-    retval, R, t, mask = cv2.recoverPose(essential_mat, last_pts.reshape(1, -1, 2), current_pts.reshape(1, -1, 2), camera_matrix)
-    valid_map_points_mask = mask.astype(np.bool).reshape(-1,)
-    if retval >= 0.25*current_pts.reshape(1, -1, 2).shape[1]:
+    num_inliers, R, t, mask = cv2.recoverPose(essential_mat, last_pts.reshape(1, -1, 2), current_pts.reshape(1, -1, 2), camera_matrix)
+    mask = mask.astype(np.bool).reshape(-1,)
+
+    if num_inliers >= 0.25*current_pts.reshape(1, -1, 2).shape[1]:
         print("init R", R)
         print("init t", t)
 
@@ -199,7 +200,7 @@ def initialize(fast, orb, camera_matrix, min_parallax=60.0):
         pts_3d = cv2.convertPointsFromHomogeneous(pts_3d).reshape(-1, 3)
 
         # filter outliers based on mask from recoverPose
-        pts_3d = pts_3d[valid_map_points_mask, :].reshape(-1, 3)
+        #pts_3d = pts_3d[valid_map_points_mask, :].reshape(-1, 3)
 
         # add triangulated points to map points
         #map_points = np.vstack((map_points, pts_3d))  # map_points[0] stores 3D points w.r.t. KF0, mask demarks good points in the set
@@ -213,10 +214,10 @@ def initialize(fast, orb, camera_matrix, min_parallax=60.0):
     else:
         raise RuntimeError("Could not recover intial camera pose based on selected keyframes. Insufficient parallax or number of feature points.")
 
-    return pose_graph, map_points, valid_map_points_mask
+    return pose_graph, map_points
 
 
-pose_graph, map_points, valid_map_points_mask = initialize(fast, orb, camera_matrix)
+pose_graph, map_points = initialize(fast, orb, camera_matrix)
 
 
 previous_frame = None
@@ -266,17 +267,18 @@ while(True):
 
 
     # recover pose by solving PnP
-    img_points = kp[valid_map_points_mask, :]#[mask&good, :]  # 2D points in current frame
+    img_points = kp#[mask&good, :]  # 2D points in current frame
+    #img_points = kp[valid_map_points_mask, :]#[mask&good, :]  # 2D points in current frame
     #pts_3d = map_points[-1]["pts_3d"]#[mask&good, :]  # corresponding 3D points in previous key frame
     pts_3d = map_points[-1] # TODO: retrieve only those map point svisible by the key frames
     print(pts_3d)
     print(pts_3d.shape)
     print(pts_3d.dtype)
     print("current_pts before PnP", img_points, "len", img_points.shape)
-    retval, rvec, tvec, inliers = cv2.solvePnPRansac(pts_3d.reshape(-1, 1, 3), img_points.reshape(-1, 1, 2), camera_matrix, None, reprojectionError=8, iterationsCount=100)
-    if not retval:
+    success, rvec, tvec, inliers = cv2.solvePnPRansac(pts_3d.reshape(-1, 1, 3), img_points.reshape(-1, 1, 2), camera_matrix, None, reprojectionError=8, iterationsCount=100)
+    if not success:
         raise RuntimeError("Could not compute the camera pose for the new frame with solvePnP.")
-    #print(retval)
+    #print(success)
     #print(inliers)
     R_rel = cv2.Rodrigues(rvec)[0].T
     t_rel = -np.matmul(cv2.Rodrigues(rvec)[0].T, tvec)
