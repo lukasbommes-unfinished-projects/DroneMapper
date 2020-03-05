@@ -5,9 +5,10 @@
 # from OpenGL.GL import *
 # from pytransform3d.rotations import axis_angle_from_matrix
 
+import pickle
 import numpy as np
 import cv2
-import pickle
+import networkx as nx
 
 from ssc import ssc
 
@@ -102,11 +103,14 @@ match_frame = None
 Rs = []
 ts = []
 
+# stores keyframe poses and data (keypoints, ORB descriptors, etc.)
+pose_graph = nx.Graph()
+
 frame_idx = 0
 
 
 # for testing remove the first part of the video where drone ascends
-#[cap.read() for _ in range(1000)]
+[cap.read() for _ in range(1000)]
 
 # TODO: It is a good idea to normalize the frame sbefore performing any operation
 #  this helps to account for changes in lighting, exposure, etc.
@@ -125,7 +129,7 @@ def initialize(fast, orb, camera_matrix, min_parallax=60.0):
             keyframe. This is needed to ensure enough parallax to recover
             the camera poses and 3D points.
     """
-    keyframes = []
+    #keyframes = []
     map_points = []
 
     # get first key frame
@@ -135,7 +139,8 @@ def initialize(fast, orb, camera_matrix, min_parallax=60.0):
     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     frame = cv2.remap(frame, mapx, mapy, cv2.INTER_CUBIC)
     kp, des = extract_kp_des(frame, fast, orb)
-    keyframes.append({"frame": frame, "kp": kp, "des": des})
+    #keyframes.append({"frame": frame, "kp": kp, "des": des})
+    pose_graph.add_node(0, frame=frame, kp=kp, des=des)
 
     frame_idx_init = 0
 
@@ -149,8 +154,8 @@ def initialize(fast, orb, camera_matrix, min_parallax=60.0):
         # extract keypoints and match with first key frame
         kp, des = extract_kp_des(frame, fast, orb)
         matches, last_pts, current_pts, match_frame = match(bf,
-            keyframes[0]["frame"], frame, keyframes[0]["des"],
-            des, keyframes[0]["kp"], kp, num_matches, draw=False)
+            pose_graph.nodes[0]["frame"], frame, pose_graph.nodes[0]["des"],
+            des, pose_graph.nodes[0]["kp"], kp, num_matches, draw=False)
 
         # determine median distance between all matched feature points
         median_dist = np.median(np.linalg.norm(last_pts.reshape(-1, 2)-current_pts.reshape(-1, 2), axis=1))
@@ -158,15 +163,20 @@ def initialize(fast, orb, camera_matrix, min_parallax=60.0):
 
         # if distance exceeds threshold choose frame as second keyframe
         if median_dist >= min_parallax:
-            keyframes.append({"frame": frame, "kp": kp, "des": des})
+            #keyframes.append({"frame": frame, "kp": kp, "des": des})
+            pose_graph.add_node(1, frame=frame, kp=kp, des=des)
             break
 
         frame_idx_init += 1
 
-    keyframes[0]["kp"] = cv2.KeyPoint_convert(last_pts)
-    #keyframes[0]["des"] = last_des
-    keyframes[1]["kp"] = cv2.KeyPoint_convert(current_pts)
-    #keyframes[1]["des"] = current_des
+    pose_graph.add_edge(0, 1, matches=matches)
+
+    #keyframes[0]["kp"] = cv2.KeyPoint_convert(last_pts)
+    ##keyframes[0]["des"] = last_des
+    #keyframes[1]["kp"] = cv2.KeyPoint_convert(current_pts)
+    ##keyframes[1]["des"] = current_des
+    pose_graph.nodes[0]["kp_matched"] = last_pts #cv2.KeyPoint_convert(last_pts)
+    pose_graph.nodes[1]["kp_matched"] = current_pts #cv2.KeyPoint_convert(current_pts)
 
     # compute relative camera pose for second frame
     essential_mat, _ = cv2.findEssentialMat(last_pts, current_pts, camera_matrix, method=cv2.RANSAC)
@@ -184,8 +194,10 @@ def initialize(fast, orb, camera_matrix, min_parallax=60.0):
 
         # insert pose (in twist coordinates) of KF0 and KF1 into keyframes dict
         # poses are w.r.t. KF0 which is the base coordinate system of the entire map
-        keyframes[0]["pose"] = to_twist(R1, t1)
-        keyframes[1]["pose"] = to_twist(R2, t2)
+        #keyframes[0]["pose"] = to_twist(R1, t1)
+        #keyframes[1]["pose"] = to_twist(R2, t2)
+        pose_graph.nodes[0]["pose"] = to_twist(R1, t1)
+        pose_graph.nodes[1]["pose"] = to_twist(R2, t2)
 
         # create projection matrices needed for triangulation of initial 3D point cloud
         proj_matrix1 = np.hstack([R1.T, -R1.T.dot(t1)])
@@ -208,10 +220,12 @@ def initialize(fast, orb, camera_matrix, min_parallax=60.0):
     else:
         raise RuntimeError("Could not recover intial camera pose based on selected keyframes. Try choosing a different pair of initial keyframes.")
 
-    return keyframes, map_points
+    #return keyframes, map_points
+    return pose_graph, map_points
 
 
-keyframes, map_points = initialize(fast, orb, camera_matrix)
+#keyframes, map_points = initialize(fast, orb, camera_matrix)
+pose_graph, map_points = initialize(fast, orb, camera_matrix)
 
 
 previous_frame = None
@@ -243,8 +257,10 @@ while(True):
         kp, des = extract_kp_des(current_frame, fast, orb)
         print("Found {} keypoints in current frame".format(len(kp)))
         previous_frame = current_frame
-        previous_kp = keyframes[-1]["kp"]
-        vis_current_frame = cv2.drawKeypoints(np.copy(current_frame), previous_kp, None, flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
+        #previous_kp = keyframes[-1]["kp"]
+        prev_node_id = sorted(pose_graph.nodes)[-1]
+        previous_kp = pose_graph.nodes[prev_node_id]["kp_matched"]
+        vis_current_frame = cv2.drawKeypoints(np.copy(current_frame), cv2.KeyPoint_convert(previous_kp), None, flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
         frame_idx += 1
         continue
 
@@ -256,14 +272,15 @@ while(True):
 
     # track matched kps of last key frame
     print("performing tracking")
-    p0 = np.float32(cv2.KeyPoint_convert(previous_kp)).reshape(-1, 1, 2)
+    #p0 = np.float32(cv2.KeyPoint_convert(previous_kp)).reshape(-1, 1, 2)
+    p0 = np.float32(previous_kp).reshape(-1, 1, 2)
     p1, _st, _err = cv2.calcOpticalFlowPyrLK(previous_frame, current_frame, p0, None, **lk_params)
     p0r, _st, _err = cv2.calcOpticalFlowPyrLK(current_frame, previous_frame, p1, None, **lk_params)  # back-tracking
     d = abs(p0-p0r).reshape(-1, 2).max(-1)
     good = d < 1
-    kp = cv2.KeyPoint_convert(p1)
-    #kp, des = orb.compute(current_frame, kp)
-    vis_current_frame = cv2.drawKeypoints(np.copy(current_frame), kp, None, flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
+    #kp = cv2.KeyPoint_convert(p1)
+    kp = p1
+    vis_current_frame = cv2.drawKeypoints(np.copy(current_frame), cv2.KeyPoint_convert(kp), None, flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
 
 
     #print("len(kp)", len(kp))
@@ -277,7 +294,8 @@ while(True):
 
     # recover pose by solving PnP
     mask = map_points[-1]["mask"]
-    img_points = cv2.KeyPoint_convert(kp)#[mask&good, :]  # 2D points in current frame
+    #img_points = cv2.KeyPoint_convert(kp)#[mask&good, :]  # 2D points in current frame
+    img_points = kp#[mask&good, :]  # 2D points in current frame
     pts_3d = map_points[-1]["pts_3d"]#[mask&good, :]  # corresponding 3D points in previous key frame
     print("current_pts before PnP", img_points, "len", img_points.shape)
     retval, rvec, tvec, inliers = cv2.solvePnPRansac(pts_3d.reshape(-1, 1, 3), img_points.reshape(-1, 1, 2), camera_matrix, None, reprojectionError=8, iterationsCount=100)
@@ -300,7 +318,8 @@ while(True):
     #    cv2.imshow("last_frame", last_kf["frame"])
     #if match_frame is not None:
     #    cv2.imshow("match_frame", match_frame)
-    cv2.imshow("last_keyframe", keyframes[-1]["frame"])
+    prev_node_id = sorted(pose_graph.nodes)[-1]
+    cv2.imshow("last_keyframe", pose_graph.nodes[prev_node_id]["frame"])
 
     # handle key presses
     # 'q' - Quit the running program
@@ -338,13 +357,16 @@ while(True):
         print("########## insert new KF ###########")
 
         pickle.dump(current_frame, open("new_keyframe.pkl", "wb"))
-        pickle.dump(cv2.KeyPoint_convert(kp), open("new_kp.pkl", "wb"))
+        pickle.dump(kp, open("new_kp.pkl", "wb"))
         pickle.dump(curent_pose, open("new_pose.pkl", "wb"))
 
-        keyframes[-1]["kp"] = cv2.KeyPoint_convert(keyframes[-1]["kp"])
-        pickle.dump(keyframes[-1], open("last_keyframe.pkl", "wb"))
-
-        print("Currently, {} KFs are stored".format(len(keyframes)))
+        # keyframes[-1]["kp"] = cv2.KeyPoint_convert(keyframes[-1]["kp"])
+        # pickle.dump(keyframes[-1], open("last_keyframe.pkl", "wb"))
+        # print("Currently, {} KFs are stored".format(len(keyframes)))
+        prev_node_id = sorted(pose_graph.nodes)[-1]
+        print(pose_graph.nodes[prev_node_id]["kp"])
+        pickle.dump(cv2.KeyPoint_convert(pose_graph.nodes[prev_node_id]["kp"]), open("last_keyframe.pkl", "wb"))
+        print("Currently, {} KFs are stored".format(len(pose_graph)))
 
         break # for testing only
 
