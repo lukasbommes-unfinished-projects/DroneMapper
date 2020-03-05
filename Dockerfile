@@ -207,8 +207,8 @@ RUN apt-get update && \
 
 # Install Python packages
 COPY requirements.txt /
-RUN pip3 install --upgrade pip
-RUN pip3 install -r /requirements.txt
+RUN python3 -m pip install --upgrade pip
+RUN python3 -m pip install -r /requirements.txt
 
 ##############################################################################
 #
@@ -218,8 +218,9 @@ RUN pip3 install -r /requirements.txt
 
 WORKDIR /dronemapper
 
+EXPOSE 8888
+
 # TODO:
-# 1) install pangolin
 # 2) Install pyg2o
 
 CMD ["sh", "-c", "tail -f /dev/null"]
