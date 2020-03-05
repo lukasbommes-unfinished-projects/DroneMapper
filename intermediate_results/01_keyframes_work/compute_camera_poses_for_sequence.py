@@ -27,7 +27,7 @@ camera_matrix = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]])
 dist_coeffs = np.array([-0.01581, 0.01052, -0.00075, 0.00245, 0.00000])
 
 # read video
-video_file = "phantom3-village-original/flight.MOV"
+video_file = "../../phantom3-village-original/flight.MOV"
 cap = cv2.VideoCapture(video_file)
 
 # precompute undistortion maps
@@ -204,7 +204,7 @@ def initialize(fast, orb, camera_matrix, min_parallax=60.0):
 
         # add triangulated points to map points
         #map_points = np.vstack((map_points, pts_3d))  # map_points[0] stores 3D points w.r.t. KF0, mask demarks good points in the set
-        map_points.append(pts_3d)  # TODO: merge point clouds into single array, store in each kf in the pose graph which points are observable from this KF
+        map_points.append(pts_3d)
 
         # TODO: store info which map points belong to KF in pose graph node
         #pose_graph.nodes[1]["visible_map_points"] =
@@ -411,8 +411,9 @@ while(True):
                 step_wise = False
                 break
 
-    #if frame_idx == 100:
-    #    break
+    # no ability to recover yet when drone flies over open sea and no kps are detected
+    if frame_idx == 598:
+        break
 
 cap.release()
 cv2.destroyAllWindows()
@@ -420,4 +421,4 @@ cv2.destroyAllWindows()
 pickle.dump(Rs, open("Rs.pkl", "wb"))
 pickle.dump(ts, open("ts.pkl", "wb"))
 pickle.dump(map_points, open("map_points.pkl", "wb"))
-pickle.dump(pose_graph, open("pose_graph.pkl", "wb"))
+#pickle.dump(pose_graph, open("pose_graph.pkl", "wb"))  # throws error because kp is cv2.KeyPoint
