@@ -5,9 +5,8 @@ sys.path.append('/home/pangolin/build/src') # for inside docker container
 import pypangolin as pango
 from OpenGL.GL import *
 
-import pickle
-import random
 import numpy as np
+import pickle
 
 from pytransform3d.rotations import axis_angle_from_matrix
 
@@ -15,13 +14,10 @@ Rs = pickle.load(open("Rs.pkl", "rb"))
 ts = pickle.load(open("ts.pkl", "rb"))
 map_points = pickle.load(open("map_points.pkl", "rb"))
 
-COLORS = [(0, 0, 1),
-          (0, 1, 0),
-          (0, 1, 1),
-          (1, 0, 0),
-          (1, 0, 1),
-          (1, 1, 0),
-          (1, 1, 1)]
+m = map_points[0]["mask"]
+mp_x = map_points[0]["pts_3d"][m, 0]
+mp_y = map_points[0]["pts_3d"][m, 1]
+mp_z = map_points[0]["pts_3d"][m, 2]
 
 def main():
     win = pango.CreateWindowAndBind("pySimpleDisplay", 1600, 900)
@@ -43,8 +39,7 @@ def main():
                                             -aspect).SetHandler(handler)
 
     while not pango.ShouldQuit():
-        #glClearColor(0.0, 0.5, 0.0, 1.0)
-        glClearColor(0.0, 0.0, 0.0, 1.0)
+        glClearColor(0.0, 0.5, 0.0, 1.0)
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
         d_cam.Activate(s_cam)
         glMatrixMode(GL_MODELVIEW)
@@ -52,11 +47,9 @@ def main():
         # draw map points
         glPointSize(2)
         glBegin(GL_POINTS)
-        for i, m in enumerate(map_points):
-            # get_random_color
-            glColor3f(*COLORS[i%len(COLORS)])
-            for p_x, p_y, p_z in zip(m[:, 0], m[:, 1], m[:, 2]):
-                glVertex3f(p_x, p_y, p_z)
+        glColor3f(1.0, 1.0, 1.0)
+        for p_x, p_y, p_z in zip(mp_x, mp_y, mp_z):
+            glVertex3f(p_x, p_y, p_z)
         glEnd()
 
         # draw origin coordinate system (red: x, green: y, blue: z)
