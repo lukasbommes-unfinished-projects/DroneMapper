@@ -13,6 +13,7 @@ from pytransform3d.rotations import axis_angle_from_matrix
 
 Rs = pickle.load(open("Rs.pkl", "rb"))
 ts = pickle.load(open("ts.pkl", "rb"))
+kf_poses = pickle.load(open("kf_poses.pkl", "rb"))
 map_points = pickle.load(open("map_points.pkl", "rb"))
 
 COLORS = [(0, 0, 1),

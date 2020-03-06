@@ -27,7 +27,7 @@ camera_matrix = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]])
 dist_coeffs = np.array([-0.01581, 0.01052, -0.00075, 0.00245, 0.00000])
 
 # read video
-video_file = "../../phantom3-village-original/flight_truncated.MOV"
+video_file = "../../phantom3-village-original/flight.MOV"
 cap = cv2.VideoCapture(video_file)
 
 # precompute undistortion maps
@@ -117,7 +117,7 @@ frame_idx = 0
 
 
 # for testing remove the first part of the video where drone ascends
-#[cap.read() for _ in range(1000)]
+[cap.read() for _ in range(1000)]
 
 # TODO: It is a good idea to normalize the frame sbefore performing any operation
 #  this helps to account for changes in lighting, exposure, etc.
