@@ -27,7 +27,7 @@ camera_matrix = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]])
 dist_coeffs = np.array([-0.01581, 0.01052, -0.00075, 0.00245, 0.00000])
 
 # read video
-video_file = "phantom3-village-original/flight.MOV"
+video_file = "../../phantom3-village-original/flight_truncated.MOV"
 cap = cv2.VideoCapture(video_file)
 
 # precompute undistortion maps
@@ -117,7 +117,7 @@ frame_idx = 0
 
 
 # for testing remove the first part of the video where drone ascends
-[cap.read() for _ in range(1000)]
+#[cap.read() for _ in range(1000)]
 
 # TODO: It is a good idea to normalize the frame sbefore performing any operation
 #  this helps to account for changes in lighting, exposure, etc.
@@ -303,16 +303,17 @@ while(True):
 
     if not last_frame_was_keyframe:
         current_frame = get_frame(cap, mapx, mapy)
+        frame_idx += 1
 
-        # track matched kps of last key frame
-        print("performing tracking")
-        p0 = np.float32(previous_kp).reshape(-1, 1, 2)
-        p1, _st, _err = cv2.calcOpticalFlowPyrLK(previous_frame, current_frame, p0, None, **lk_params)
-        p0r, _st, _err = cv2.calcOpticalFlowPyrLK(current_frame, previous_frame, p1, None, **lk_params)  # back-tracking
-        d = abs(p0-p0r).reshape(-1, 2).max(-1)
-        good = d < 1
-        current_kp = p1
-        vis_current_frame = cv2.drawKeypoints(np.copy(current_frame), cv2.KeyPoint_convert(current_kp), None, flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
+    # track matched kps of last key frame
+    print("performing tracking")
+    p0 = np.float32(previous_kp).reshape(-1, 1, 2)
+    p1, _st, _err = cv2.calcOpticalFlowPyrLK(previous_frame, current_frame, p0, None, **lk_params)
+    p0r, _st, _err = cv2.calcOpticalFlowPyrLK(current_frame, previous_frame, p1, None, **lk_params)  # back-tracking
+    d = abs(p0-p0r).reshape(-1, 2).max(-1)
+    good = d < 1
+    current_kp = p1
+    vis_current_frame = cv2.drawKeypoints(np.copy(current_frame), cv2.KeyPoint_convert(current_kp), None, flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
 
     # recover camera pose of current frame by solving PnP
     img_points = current_kp#[mask&good, :]  # 2D points in current frame
@@ -337,7 +338,7 @@ while(True):
                                       [0, 0, 0, 1, 0, 0],   # t1 = x
                                       [0, 0, 0, 0, 1, 0],   # t2 = y
                                       [0, 0, 0, 0, 0, 10]]) # t3 = z
-    pose_distance_threshold = 5
+    pose_distance_threshold = 10
     # compute relative pose to pose of last keyframe
     prev_node_id = sorted(pose_graph.nodes)[-1]
     R_last_kf, t_last_kf = from_twist(pose_graph.nodes[prev_node_id]["pose"])
@@ -358,9 +359,9 @@ while(True):
         Rs.append(R_current)
         ts.append(t_current)
 
-        #previous_frame = current_frame
-        #previous_kp = current_kp
-        #frame_idx += 1
+        # update for tracking of keypoints from previous to next frame
+        previous_frame = current_frame
+        previous_kp = current_kp
 
     else:  # insert a new keyframe with data of previous frame, then track again
         last_frame_was_keyframe = True  # do not retrieve a new frame in the next iteration as we first need to process the already retrieved frame
@@ -412,14 +413,9 @@ while(True):
         # remove points with negative z coordinate
         #pts_3d = pts_3d[np.where(pts_3d[:, 2] >= t1[2]), :].reshape(-1, 3)
 
-        # update keypoints in the current_frame
-        current_kp = current_pts
-
-    if not last_frame_was_keyframe:
-        previous_frame = current_frame
-        previous_kp = current_kp
-        frame_idx += 1
-
+        # update for tracking of keypoints from previous to next frame
+        previous_frame = kf_candidate_frame
+        previous_kp = current_pts
 
     cv2.imshow("current_frame", vis_current_frame)
     prev_node_id = sorted(pose_graph.nodes)[-1]
