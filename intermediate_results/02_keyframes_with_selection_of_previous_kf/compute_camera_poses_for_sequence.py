@@ -27,7 +27,7 @@ camera_matrix = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]])
 dist_coeffs = np.array([-0.01581, 0.01052, -0.00075, 0.00245, 0.00000])
 
 # read video
-video_file = "phantom3-village-original/flight_truncated.MOV"
+video_file = "../../phantom3-village-original/flight_truncated.MOV"
 cap = cv2.VideoCapture(video_file)
 
 # precompute undistortion maps
