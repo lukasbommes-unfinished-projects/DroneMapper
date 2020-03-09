@@ -137,8 +137,8 @@ def initialize(fast, orb, camera_matrix, min_parallax=60.0):
             the camera poses and 3D points.
     """
     pose_graph = nx.Graph()  # stores keyframe poses and data (keypoints, ORB descriptors, etc.)
-    map_points = np.empty(shape=(0, 3), dtype=np.float64)  # stores 3D world points
-    #map_points = []
+    #map_points = np.empty(shape=(0, 3), dtype=np.float64)  # stores 3D world points
+    map_points = []
 
     # get first key frame
     frame = get_frame(cap, mapx, mapy)
@@ -207,19 +207,16 @@ def initialize(fast, orb, camera_matrix, min_parallax=60.0):
         #pts_3d = pts_3d[valid_map_points_mask, :].reshape(-1, 3)
 
         # add triangulated points to map points
-        map_points = np.vstack((map_points, pts_3d))  # map_points stores 3D points w.r.t. KF0
-        #map_points.append(pts_3d)  # TODO: merge point clouds into single array, store in each kf in the pose graph which points are observable from this KF
+        #map_points = np.vstack((map_points, pts_3d))  # map_points[0] stores 3D points w.r.t. KF0, mask demarks good points in the set
+        map_points.append(pts_3d)  # TODO: merge point clouds into single array, store in each kf in the pose graph which points are observable from this KF
 
-        # Store indices of map points belonging to KF0 and KF1 in pose graph node
-        pose_graph.nodes[0]["visible_map_points"] = [range(0, pts_3d.shape[0])]
-        pose_graph.nodes[1]["visible_map_points"] = [range(0, pts_3d.shape[0])]
+        # TODO: store info which map points belong to KF in pose graph node
+        #pose_graph.nodes[1]["visible_map_points"] =
 
         print("Initialization successful. Chose frames 0 and {} as key frames".format(frame_idx_init))
 
     else:
         raise RuntimeError("Could not recover intial camera pose based on selected keyframes. Insufficient parallax or number of feature points.")
-
-    # TODO: perform full BA to optimize initial camera poses and map points
 
     return pose_graph, map_points
 
@@ -323,15 +320,6 @@ while(True):
     #img_points = current_kp[valid_map_points_mask, :]#[mask&good, :]  # 2D points in current frame
     #pts_3d = map_points[-1]["pts_3d"]#[mask&good, :]  # corresponding 3D points in previous key frame
     pts_3d = map_points[-1] # TODO: retrieve only those map point svisible by the key frames
-
-    # retrieve map points visible by last key frame
-    prev_node_id = sorted(pose_graph.nodes)[-1]
-    visible_map_points = pose_graph.nodes[prev_node_id]["visible_map_points"]  # may contain multiple disconnected index ranges
-    try:
-        pts_3d = np.vstack([map_points[vs, :] for vs in visible_map_points])
-    except ValueError:
-        raise ValueError ("Last keyframe did not contain any visible map points.")
-
     print(pts_3d)
     print(pts_3d.shape)
     print(pts_3d.dtype)
@@ -409,7 +397,9 @@ while(True):
         pts_3d = cv2.convertPointsFromHomogeneous(pts_3d).reshape(-1, 3)
 
         print("pts_3d", pts_3d)
-        #map_points.append(pts_3d)
+
+        #map_points = np.vstack((map_points, pts_3d))
+        map_points.append(pts_3d)
 
         # insert new keyframe into pose graph
         pose_graph.add_node(prev_node_id+1,
@@ -419,12 +409,6 @@ while(True):
             des=des_kf_match,
             pose=kf_candidate_pose)
         pose_graph.add_edge(prev_node_id, prev_node_id+1, matches=matches)
-
-        # add new map points to map point array and store index range of these new points in pose graph
-        map_len = map_points.shape[0]
-        map_points = np.vstack((map_points, pts_3d))
-        pose_graph.nodes[prev_node_id]["visible_map_points"].append(range(map_len, map_len + pts_3d.shape[0]))  # triangulatde points are also visible from previous key frame
-        pose_graph.nodes[prev_node_id+1]["visible_map_points"] = [range(map_len, map_len + pts_3d.shape[0])]
 
         # remove points with negative z coordinate
         #pts_3d = pts_3d[np.where(pts_3d[:, 2] >= t1[2]), :].reshape(-1, 3)
@@ -465,8 +449,6 @@ pickle.dump(Rs, open("Rs.pkl", "wb"))
 pickle.dump(ts, open("ts.pkl", "wb"))
 pickle.dump(map_points, open("map_points.pkl", "wb"))
 
-# extract keyframe poses and visible map points from pose graph for plotting
+# extract keyframe poses from pose graph for plotting
 kf_poses = [data["pose"] for _, data in pose_graph.nodes.data()]
 pickle.dump(kf_poses, open("kf_poses.pkl", "wb"))
-kf_visible_map_points = [data["visible_map_points"] for _, data in pose_graph.nodes.data()]
-pickle.dump(kf_visible_map_points, open("kf_visible_map_points.pkl", "wb"))

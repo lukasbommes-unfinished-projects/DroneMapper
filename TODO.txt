@@ -1,0 +1,3 @@
+- use pyDBoW to retrieve overlapping frames during kf insertion and triangulate new world points from overlap
+- merge world points and add an index to pose graph for the visible world points in each key frame
+- fit plane into map points and project frames onto ground plane
