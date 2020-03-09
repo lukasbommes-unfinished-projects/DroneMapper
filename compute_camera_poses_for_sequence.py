@@ -219,7 +219,7 @@ def initialize(fast, orb, camera_matrix, min_parallax=60.0):
     else:
         raise RuntimeError("Could not recover intial camera pose based on selected keyframes. Insufficient parallax or number of feature points.")
 
-    # TODO: perform full BA to optimize initial camera poses and map points
+    # TODO: perform full BA to optimize initial camera poses and map points [see. ORB_SLAM IV. 5)]
 
     return pose_graph, map_points
 
