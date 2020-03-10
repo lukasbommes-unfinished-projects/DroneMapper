@@ -34,7 +34,7 @@ COLORS = [(0, 0, 1),
           (1, 1, 0),
           (1, 1, 1)]
 
-COLORS = [(0.5, 0.5, 0.5)]
+#COLORS = [(0.5, 0.5, 0.5)]
 
 # extract keyframe poses
 Rs = []
@@ -85,36 +85,36 @@ def main():
         #         glVertex3f(p_x, p_y, p_z)
         # glEnd()
 
-        # draw map points (new format)
-        glPointSize(2)
-        glBegin(GL_POINTS)
-        for i, kfs in enumerate(kf_visible_map_points):
-            # get_random_color
-            glColor3f(*COLORS[i%len(COLORS)])
-            visible_map_points = np.vstack([map_points[k, :] for k in kfs])
-            for j, (p_x, p_y, p_z) in enumerate(zip(visible_map_points[:, 0], visible_map_points[:, 1], visible_map_points[:, 2])):
-                if j % subsmaple_map_points != 0:
-                    continue
-                glVertex3f(p_x, p_y, p_z)
-        glEnd()
-
-        # draw map points visible in two key frames
+        # # draw map points (new format)
         # glPointSize(2)
         # glBegin(GL_POINTS)
-        # glColor3f(1.0, 0.667, 0.0)
-        # visible_map_points = np.vstack([map_points[k, :] for k in kf_visible_map_points[2]])
-        # for j, (p_x, p_y, p_z) in enumerate(zip(visible_map_points[:, 0], visible_map_points[:, 1], visible_map_points[:, 2])):
-        #     #if j % subsmaple_map_points != 0:
-        #     #    continue
-        #     glVertex3f(p_x, p_y, p_z)
-        #
-        # glColor3f(0.0, 0.0, 1.0)
-        # visible_map_points = np.vstack([map_points[k, :] for k in kf_visible_map_points[3]])
-        # for j, (p_x, p_y, p_z) in enumerate(zip(visible_map_points[:, 0], visible_map_points[:, 1], visible_map_points[:, 2])):
-        #     #if j % subsmaple_map_points != 0:
-        #     #    continue
-        #     glVertex3f(p_x, p_y, p_z)
+        # for i, kfs in enumerate(kf_visible_map_points):
+        #     # get_random_color
+        #     glColor3f(*COLORS[i%len(COLORS)])
+        #     visible_map_points = np.vstack([map_points[k, :] for k in kfs])
+        #     for j, (p_x, p_y, p_z) in enumerate(zip(visible_map_points[:, 0], visible_map_points[:, 1], visible_map_points[:, 2])):
+        #         #if j % subsmaple_map_points != 0:
+        #         #    continue
+        #         glVertex3f(p_x, p_y, p_z)
         # glEnd()
+
+        #draw map points visible in two key frames
+        glPointSize(2)
+        glBegin(GL_POINTS)
+        glColor3f(1.0, 0.667, 0.0)
+        visible_map_points = np.vstack([map_points[k, :] for k in kf_visible_map_points[5]])
+        for j, (p_x, p_y, p_z) in enumerate(zip(visible_map_points[:, 0], visible_map_points[:, 1], visible_map_points[:, 2])):
+            #if j % subsmaple_map_points != 0:
+            #    continue
+            glVertex3f(p_x, p_y, p_z)
+
+        glColor3f(0.0, 0.0, 1.0)
+        visible_map_points = np.vstack([map_points[k, :] for k in kf_visible_map_points[33]])
+        for j, (p_x, p_y, p_z) in enumerate(zip(visible_map_points[:, 0], visible_map_points[:, 1], visible_map_points[:, 2])):
+            #if j % subsmaple_map_points != 0:
+            #    continue
+            glVertex3f(p_x, p_y, p_z)
+        glEnd()
 
         # draw origin coordinate system (red: x, green: y, blue: z)
         glBegin(GL_LINES)

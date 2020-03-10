@@ -322,7 +322,7 @@ while(True):
     img_points = current_kp#[mask&good, :]  # 2D points in current frame
     #img_points = current_kp[valid_map_points_mask, :]#[mask&good, :]  # 2D points in current frame
     #pts_3d = map_points[-1]["pts_3d"]#[mask&good, :]  # corresponding 3D points in previous key frame
-    pts_3d = map_points[-1] # TODO: retrieve only those map point svisible by the key frames
+    #pts_3d = map_points[-1] # TODO: retrieve only those map point svisible by the key frames
 
     # retrieve map points visible by last key frame
     prev_node_id = sorted(pose_graph.nodes)[-1]
