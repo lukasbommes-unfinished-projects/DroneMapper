@@ -102,14 +102,14 @@ def main():
         glPointSize(2)
         glBegin(GL_POINTS)
         glColor3f(1.0, 0.667, 0.0)
-        visible_map_points = np.vstack([map_points[k, :] for k in kf_visible_map_points[5]])
+        visible_map_points = np.vstack([map_points[k, :] for k in kf_visible_map_points[0]])  #5
         for j, (p_x, p_y, p_z) in enumerate(zip(visible_map_points[:, 0], visible_map_points[:, 1], visible_map_points[:, 2])):
             #if j % subsmaple_map_points != 0:
             #    continue
             glVertex3f(p_x, p_y, p_z)
 
         glColor3f(0.0, 0.0, 1.0)
-        visible_map_points = np.vstack([map_points[k, :] for k in kf_visible_map_points[33]])
+        visible_map_points = np.vstack([map_points[k, :] for k in kf_visible_map_points[1]])  #33
         for j, (p_x, p_y, p_z) in enumerate(zip(visible_map_points[:, 0], visible_map_points[:, 1], visible_map_points[:, 2])):
             #if j % subsmaple_map_points != 0:
             #    continue

@@ -415,7 +415,7 @@ while(True):
         pose_graph.add_node(prev_node_id+1,
             frame=kf_candidate_frame,
             kp=kp_kf_match,
-            kp_matched=current_pts,
+            kp_matched=current_pts.reshape(-1, 2),
             des=des_kf_match,
             pose=kf_candidate_pose)
         pose_graph.add_edge(prev_node_id, prev_node_id+1, matches=matches)
@@ -470,3 +470,7 @@ kf_poses = [data["pose"] for _, data in pose_graph.nodes.data()]
 pickle.dump(kf_poses, open("kf_poses.pkl", "wb"))
 kf_visible_map_points = [data["visible_map_points"] for _, data in pose_graph.nodes.data()]
 pickle.dump(kf_visible_map_points, open("kf_visible_map_points.pkl", "wb"))
+kf_frames = [data["frame"] for _, data in pose_graph.nodes.data()]
+pickle.dump(kf_frames, open("kf_frames.pkl", "wb"))
+kf_kp_matched = [data["kp_matched"] for _, data in pose_graph.nodes.data()]
+pickle.dump(kf_kp_matched, open("kf_kp_matched.pkl", "wb"))
