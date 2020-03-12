@@ -1,3 +1,4 @@
+import os
 import pickle
 import numpy as np
 import cv2
@@ -94,6 +95,23 @@ def gray(frame):
     """Convert BGR frame to gray frame."""
     frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     return frame_gray
+
+
+def dump_result(path="."):
+    pickle.dump(Rs, open(os.path.join(path, "Rs.pkl"), "wb"))
+    pickle.dump(ts, open(os.path.join(path, "ts.pkl"), "wb"))
+    pickle.dump(map_points, open(os.path.join(path, "map_points.pkl"), "wb"))
+
+    # extract keyframe poses and visible map points from pose graph for plotting
+    kf_poses = [data["pose"] for _, data in pose_graph.nodes.data()]
+    pickle.dump(kf_poses, open(os.path.join(path, "kf_poses.pkl"), "wb"))
+    kf_visible_map_points = [data["visible_map_points"] for _, data in pose_graph.nodes.data()]
+    pickle.dump(kf_visible_map_points, open(os.path.join(path, "kf_visible_map_points.pkl"), "wb"))
+    kf_frames = [data["frame"] for _, data in pose_graph.nodes.data()]
+    pickle.dump(kf_frames, open(os.path.join(path, "kf_frames.pkl"), "wb"))
+    kf_kp_matched = [data["kp_matched"] for _, data in pose_graph.nodes.data()]
+    pickle.dump(kf_kp_matched, open(os.path.join(path, "kf_kp_matched.pkl"), "wb"))
+
 
 
 cv2.namedWindow("last_keyframe", cv2.WINDOW_NORMAL)
@@ -275,202 +293,195 @@ current_kp = None
 
 while(True):
 
-    # TODO: whenever a new frame arrives
-    # 1) preprocess frame (warp)
-    # 2) extract kps, track kps
-    # 3) match kps with kps of previous KF
-    # 4) solve PnP for matched keypoints to recover camera pose of current frame
-    # 5) compute the relative change of pose w.r.t pose in last KF
-    # 6) if pose change exceeds threshold insert a new keyframe
-
-    # TODO: insert a new key frame
-    # 1) triangulate a new set of 3D points between the last KF and this KF
-    # 2) merge the 3D point cloud with existing map points (3D points), remove duplicates, etc.
-    # 3) check which other keyframes share the same keypoints (pyDBoW3)
-    # 4) perform BA with local group (new keyframe + keyframes from 1) to adjust pose and 3D point estimates of the local group
-
-    print("frame", frame_idx)
-
-    if frame_idx == 0:
-        current_frame = get_frame(cap, mapx, mapy)
-        # store frame data for next iteration
-        previous_frame = current_frame
-        prev_node_id = sorted(pose_graph.nodes)[-1]
-        previous_kp = pose_graph.nodes[prev_node_id]["kp_matched"].reshape(1, -1, 2)
-        vis_current_frame = cv2.drawKeypoints(np.copy(current_frame), cv2.KeyPoint_convert(previous_kp), None, flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
-        frame_idx += 1
-        continue
-
-    if not last_frame_was_keyframe:
-        current_frame = get_frame(cap, mapx, mapy)
-        frame_idx += 1
-
-    # track matched kps of last key frame
-    print("performing tracking")
-    p0 = np.float32(previous_kp).reshape(-1, 1, 2)
-    p1, _st, _err = cv2.calcOpticalFlowPyrLK(gray(previous_frame), gray(current_frame), p0, None, **lk_params)
-    p0r, _st, _err = cv2.calcOpticalFlowPyrLK(gray(current_frame), gray(previous_frame), p1, None, **lk_params)  # back-tracking
-    d = abs(p0-p0r).reshape(-1, 2).max(-1)
-    good = d < 1
-    current_kp = p1
-    vis_current_frame = cv2.drawKeypoints(np.copy(current_frame), cv2.KeyPoint_convert(current_kp), None, flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
-
-    # recover camera pose of current frame by solving PnP
-    img_points = current_kp#[mask&good, :]  # 2D points in current frame
-    #img_points = current_kp[valid_map_points_mask, :]#[mask&good, :]  # 2D points in current frame
-    #pts_3d = map_points[-1]["pts_3d"]#[mask&good, :]  # corresponding 3D points in previous key frame
-    #pts_3d = map_points[-1] # TODO: retrieve only those map point svisible by the key frames
-
-    # retrieve map points visible by last key frame
-    prev_node_id = sorted(pose_graph.nodes)[-1]
-    visible_map_points = pose_graph.nodes[prev_node_id]["visible_map_points"]  # may contain multiple disconnected index ranges
     try:
-        pts_3d = np.vstack([map_points[vs, :] for vs in visible_map_points])
-    except ValueError:
-        raise ValueError ("Last keyframe did not contain any visible map points.")
 
-    print(pts_3d)
-    print(pts_3d.shape)
-    print(pts_3d.dtype)
-    #print("current_pts before PnP", img_points, "len", img_points.shape)
-    R_current, t_current = estimate_camera_pose(img_points, pts_3d, camera_matrix)
-    current_pose = to_twist(R_current, t_current)
-    print(R_current, t_current)
+        # TODO: whenever a new frame arrives
+        # 1) preprocess frame (warp)
+        # 2) extract kps, track kps
+        # 3) match kps with kps of previous KF
+        # 4) solve PnP for matched keypoints to recover camera pose of current frame
+        # 5) compute the relative change of pose w.r.t pose in last KF
+        # 6) if pose change exceeds threshold insert a new keyframe
 
-    # TODO: extend below: KF insertion decision based on travelled GPS distance and number of frames processed
+        # TODO: insert a new key frame
+        # 1) triangulate a new set of 3D points between the last KF and this KF
+        # 2) merge the 3D point cloud with existing map points (3D points), remove duplicates, etc.
+        # 3) check which other keyframes share the same keypoints (pyDBoW3)
+        # 4) perform BA with local group (new keyframe + keyframes from 1) to adjust pose and 3D point estimates of the local group
 
-    # decide when to insert a new keyframe based on a robust thresholding mechanism
-    # the weights are chosen to make the difference more sensitive to changes in rotation and z-coordinate
-    pose_distance_weights = np.array([[10, 0, 0, 0, 0, 0],  # r1
-                                      [0, 10, 0, 0, 0, 0],  # r2
-                                      [0, 0, 10, 0, 0, 0],  # r3
-                                      [0, 0, 0, 1, 0, 0],   # t1 = x
-                                      [0, 0, 0, 0, 1, 0],   # t2 = y
-                                      [0, 0, 0, 0, 0, 10]]) # t3 = z
-    pose_distance_threshold = 10
-    # compute relative pose to pose of last keyframe
-    prev_node_id = sorted(pose_graph.nodes)[-1]
-    R_last_kf, t_last_kf = from_twist(pose_graph.nodes[prev_node_id]["pose"])
-    R_delta = np.matmul(R_last_kf.T, R_current)
-    t_delta = t_current - t_last_kf
-    current_pose_delta = to_twist(R_delta, t_delta).reshape(6, 1)
-    current_dist = np.matmul(np.matmul(current_pose_delta.T, pose_distance_weights), current_pose_delta)
-    print(current_dist)
+        print("frame", frame_idx)
 
-    if current_dist < pose_distance_threshold:
-        last_frame_was_keyframe = False
+        if frame_idx == 0:
+            current_frame = get_frame(cap, mapx, mapy)
+            # store frame data for next iteration
+            previous_frame = current_frame
+            prev_node_id = sorted(pose_graph.nodes)[-1]
+            previous_kp = pose_graph.nodes[prev_node_id]["kp_matched"].reshape(1, -1, 2)
+            vis_current_frame = cv2.drawKeypoints(np.copy(current_frame), cv2.KeyPoint_convert(previous_kp), None, flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
+            frame_idx += 1
+            continue
 
-        # maintain frame data in case the next frame exceeds the pose distance threshold
-        kf_candidate_frame = current_frame
-        kf_candidate_pose = current_pose
+        if not last_frame_was_keyframe:
+            current_frame = get_frame(cap, mapx, mapy)
+            frame_idx += 1
 
-        # only store pose when it is accurately estimated
-        Rs.append(R_current)
-        ts.append(t_current)
+        # track matched kps of last key frame
+        print("performing tracking")
+        p0 = np.float32(previous_kp).reshape(-1, 1, 2)
+        p1, _st, _err = cv2.calcOpticalFlowPyrLK(gray(previous_frame), gray(current_frame), p0, None, **lk_params)
+        p0r, _st, _err = cv2.calcOpticalFlowPyrLK(gray(current_frame), gray(previous_frame), p1, None, **lk_params)  # back-tracking
+        d = abs(p0-p0r).reshape(-1, 2).max(-1)
+        good = d < 1
+        current_kp = p1
+        vis_current_frame = cv2.drawKeypoints(np.copy(current_frame), cv2.KeyPoint_convert(current_kp), None, flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
 
-        # update for tracking of keypoints from previous to next frame
-        previous_frame = current_frame
-        previous_kp = current_kp
+        # recover camera pose of current frame by solving PnP
+        img_points = current_kp#[mask&good, :]  # 2D points in current frame
+        #img_points = current_kp[valid_map_points_mask, :]#[mask&good, :]  # 2D points in current frame
+        #pts_3d = map_points[-1]["pts_3d"]#[mask&good, :]  # corresponding 3D points in previous key frame
+        #pts_3d = map_points[-1] # TODO: retrieve only those map point svisible by the key frames
 
-    else:  # insert a new keyframe with data of previous frame, then track again
-        last_frame_was_keyframe = True  # do not retrieve a new frame in the next iteration as we first need to process the already retrieved frame
-
-        print("########## insert new KF ###########")
-
-        # find matches of current frame with last key frame
-        # triangulate new map points
-        # insert map points into world map
-        # insert key frame into pose graph
-
-        # extract keypoints of new key frame and match with previous key frame
-        kp_kf_match, des_kf_match = extract_kp_des(gray(kf_candidate_frame), fast, orb)
+        # retrieve map points visible by last key frame
         prev_node_id = sorted(pose_graph.nodes)[-1]
-        matches, last_pts, current_pts, match_frame = match(bf,
-            gray(pose_graph.nodes[prev_node_id]["frame"]),
-            gray(kf_candidate_frame),
-            pose_graph.nodes[prev_node_id]["des"],
-            des_kf_match, pose_graph.nodes[prev_node_id]["kp"],
-            kp_kf_match, num_matches, draw=False)
+        visible_map_points = pose_graph.nodes[prev_node_id]["visible_map_points"]  # may contain multiple disconnected index ranges
+        try:
+            pts_3d = np.vstack([map_points[vs, :] for vs in visible_map_points])
+        except ValueError:
+            raise ValueError ("Last keyframe did not contain any visible map points.")
 
-        R1, t1 = from_twist(pose_graph.nodes[prev_node_id]["pose"])
-        R2, t2 = from_twist(kf_candidate_pose)
+        print(pts_3d)
+        print(pts_3d.shape)
+        print(pts_3d.dtype)
+        #print("current_pts before PnP", img_points, "len", img_points.shape)
+        R_current, t_current = estimate_camera_pose(img_points, pts_3d, camera_matrix)
+        current_pose = to_twist(R_current, t_current)
+        print(R_current, t_current)
 
-        print("R1, t1", (R1, t1))
-        print("R2, t2", (R2, t2))
+        # TODO: extend below: KF insertion decision based on travelled GPS distance and number of frames processed
 
-        # create projection matrices needed for triangulation of 3D points
-        proj_matrix1 = np.hstack([R1.T, -R1.T.dot(t1)])
-        proj_matrix2 = np.hstack([R2.T, -R2.T.dot(t2)])
-        proj_matrix1 = camera_matrix.dot(proj_matrix1)
-        proj_matrix2 = camera_matrix.dot(proj_matrix2)
+        # decide when to insert a new keyframe based on a robust thresholding mechanism
+        # the weights are chosen to make the difference more sensitive to changes in rotation and z-coordinate
+        pose_distance_weights = np.array([[10, 0, 0, 0, 0, 0],  # r1
+                                          [0, 10, 0, 0, 0, 0],  # r2
+                                          [0, 0, 10, 0, 0, 0],  # r3
+                                          [0, 0, 0, 1, 0, 0],   # t1 = x
+                                          [0, 0, 0, 0, 1, 0],   # t2 = y
+                                          [0, 0, 0, 0, 0, 10]]) # t3 = z
+        pose_distance_threshold = 10
+        # compute relative pose to pose of last keyframe
+        prev_node_id = sorted(pose_graph.nodes)[-1]
+        R_last_kf, t_last_kf = from_twist(pose_graph.nodes[prev_node_id]["pose"])
+        R_delta = np.matmul(R_last_kf.T, R_current)
+        t_delta = t_current - t_last_kf
+        current_pose_delta = to_twist(R_delta, t_delta).reshape(6, 1)
+        current_dist = np.matmul(np.matmul(current_pose_delta.T, pose_distance_weights), current_pose_delta)
+        print(current_dist)
 
-        # triangulate new map points based on matches with previous key frame
-        pts_3d = cv2.triangulatePoints(proj_matrix1, proj_matrix2, last_pts.reshape(-1, 2).T, current_pts.reshape(-1, 2).T).T
-        pts_3d = cv2.convertPointsFromHomogeneous(pts_3d).reshape(-1, 3)
+        if current_dist < pose_distance_threshold:
+            last_frame_was_keyframe = False
 
-        print("pts_3d", pts_3d)
-        #map_points.append(pts_3d)
+            # maintain frame data in case the next frame exceeds the pose distance threshold
+            kf_candidate_frame = current_frame
+            kf_candidate_pose = current_pose
 
-        # insert new keyframe into pose graph
-        pose_graph.add_node(prev_node_id+1,
-            frame=kf_candidate_frame,
-            kp=kp_kf_match,
-            kp_matched=current_pts.reshape(-1, 2),
-            des=des_kf_match,
-            pose=kf_candidate_pose)
-        pose_graph.add_edge(prev_node_id, prev_node_id+1, matches=matches)
+            # only store pose when it is accurately estimated
+            Rs.append(R_current)
+            ts.append(t_current)
 
-        # add new map points to map point array and store index range of these new points in pose graph
-        map_len = map_points.shape[0]
-        map_points = np.vstack((map_points, pts_3d))
-        pose_graph.nodes[prev_node_id]["visible_map_points"].append(range(map_len, map_len + pts_3d.shape[0]))  # triangulatde points are also visible from previous key frame
-        pose_graph.nodes[prev_node_id+1]["visible_map_points"] = [range(map_len, map_len + pts_3d.shape[0])]
+            # update for tracking of keypoints from previous to next frame
+            previous_frame = current_frame
+            previous_kp = current_kp
 
-        # remove points with negative z coordinate
-        #pts_3d = pts_3d[np.where(pts_3d[:, 2] >= t1[2]), :].reshape(-1, 3)
+        else:  # insert a new keyframe with data of previous frame, then track again
+            last_frame_was_keyframe = True  # do not retrieve a new frame in the next iteration as we first need to process the already retrieved frame
 
-        # update for tracking of keypoints from previous to next frame
-        previous_frame = kf_candidate_frame
-        previous_kp = current_pts
+            print("########## insert new KF ###########")
 
-    cv2.imshow("current_frame", vis_current_frame)
-    prev_node_id = sorted(pose_graph.nodes)[-1]
-    cv2.imshow("last_keyframe", pose_graph.nodes[prev_node_id]["frame"])
+            # find matches of current frame with last key frame
+            # triangulate new map points
+            # insert map points into world map
+            # insert key frame into pose graph
 
-    # handle key presses
-    # 'q' - Quit the running program
-    # 's' - enter stepwise mode
-    # 'a' - exit stepwise mode
-    key = cv2.waitKey(1)
-    if not step_wise and key == ord('s'):
-        step_wise = True
-    if key == ord('q'):
-        break
-    if step_wise:
-        while True:
-            key = cv2.waitKey(1)
-            if key == ord('s'):
-                break
-            elif key == ord('a'):
-                step_wise = False
-                break
+            # extract keypoints of new key frame and match with previous key frame
+            kp_kf_match, des_kf_match = extract_kp_des(gray(kf_candidate_frame), fast, orb)
+            prev_node_id = sorted(pose_graph.nodes)[-1]
+            matches, last_pts, current_pts, match_frame = match(bf,
+                gray(pose_graph.nodes[prev_node_id]["frame"]),
+                gray(kf_candidate_frame),
+                pose_graph.nodes[prev_node_id]["des"],
+                des_kf_match, pose_graph.nodes[prev_node_id]["kp"],
+                kp_kf_match, num_matches, draw=False)
 
-    #if frame_idx == 100:
-    #    break
+            R1, t1 = from_twist(pose_graph.nodes[prev_node_id]["pose"])
+            R2, t2 = from_twist(kf_candidate_pose)
+
+            print("R1, t1", (R1, t1))
+            print("R2, t2", (R2, t2))
+
+            # create projection matrices needed for triangulation of 3D points
+            proj_matrix1 = np.hstack([R1.T, -R1.T.dot(t1)])
+            proj_matrix2 = np.hstack([R2.T, -R2.T.dot(t2)])
+            proj_matrix1 = camera_matrix.dot(proj_matrix1)
+            proj_matrix2 = camera_matrix.dot(proj_matrix2)
+
+            # triangulate new map points based on matches with previous key frame
+            pts_3d = cv2.triangulatePoints(proj_matrix1, proj_matrix2, last_pts.reshape(-1, 2).T, current_pts.reshape(-1, 2).T).T
+            pts_3d = cv2.convertPointsFromHomogeneous(pts_3d).reshape(-1, 3)
+
+            print("pts_3d", pts_3d)
+            #map_points.append(pts_3d)
+
+            # insert new keyframe into pose graph
+            pose_graph.add_node(prev_node_id+1,
+                frame=kf_candidate_frame,
+                kp=kp_kf_match,
+                kp_matched=current_pts.reshape(-1, 2),
+                des=des_kf_match,
+                pose=kf_candidate_pose)
+            pose_graph.add_edge(prev_node_id, prev_node_id+1, matches=matches)
+
+            # add new map points to map point array and store index range of these new points in pose graph
+            map_len = map_points.shape[0]
+            map_points = np.vstack((map_points, pts_3d))
+            pose_graph.nodes[prev_node_id]["visible_map_points"].append(range(map_len, map_len + pts_3d.shape[0]))  # triangulatde points are also visible from previous key frame
+            pose_graph.nodes[prev_node_id+1]["visible_map_points"] = [range(map_len, map_len + pts_3d.shape[0])]
+
+            # remove points with negative z coordinate
+            #pts_3d = pts_3d[np.where(pts_3d[:, 2] >= t1[2]), :].reshape(-1, 3)
+
+            # update for tracking of keypoints from previous to next frame
+            previous_frame = kf_candidate_frame
+            previous_kp = current_pts
+
+        cv2.imshow("current_frame", vis_current_frame)
+        prev_node_id = sorted(pose_graph.nodes)[-1]
+        cv2.imshow("last_keyframe", pose_graph.nodes[prev_node_id]["frame"])
+
+        # handle key presses
+        # 'q' - Quit the running program
+        # 's' - enter stepwise mode
+        # 'a' - exit stepwise mode
+        key = cv2.waitKey(1)
+        if not step_wise and key == ord('s'):
+            step_wise = True
+        if key == ord('q'):
+            break
+        if step_wise:
+            while True:
+                key = cv2.waitKey(1)
+                if key == ord('s'):
+                    break
+                elif key == ord('a'):
+                    step_wise = False
+                    break
+
+    # if any error occurs store result
+    except:
+        dump_result()
+        print("Error occured. Dumped result.")
+        raise
 
 cap.release()
 cv2.destroyAllWindows()
 
-pickle.dump(Rs, open("Rs.pkl", "wb"))
-pickle.dump(ts, open("ts.pkl", "wb"))
-pickle.dump(map_points, open("map_points.pkl", "wb"))
-
-# extract keyframe poses and visible map points from pose graph for plotting
-kf_poses = [data["pose"] for _, data in pose_graph.nodes.data()]
-pickle.dump(kf_poses, open("kf_poses.pkl", "wb"))
-kf_visible_map_points = [data["visible_map_points"] for _, data in pose_graph.nodes.data()]
-pickle.dump(kf_visible_map_points, open("kf_visible_map_points.pkl", "wb"))
-kf_frames = [data["frame"] for _, data in pose_graph.nodes.data()]
-pickle.dump(kf_frames, open("kf_frames.pkl", "wb"))
-kf_kp_matched = [data["kp_matched"] for _, data in pose_graph.nodes.data()]
-pickle.dump(kf_kp_matched, open("kf_kp_matched.pkl", "wb"))
+dump_result()

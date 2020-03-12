@@ -4,7 +4,7 @@ __pycache__/
 *.SRT
 log.txt
 *.pkl
-experiments/result*.jpg
+result*.jpg
 
 pyDBoW3/ORBvoc.txt
 
