@@ -1,20 +1,9 @@
-# import sys
-# sys.path.append('/home/lukas/Pangolin/build/src')
-#
-# import pypangolin as pango
-# from OpenGL.GL import *
-# from pytransform3d.rotations import axis_angle_from_matrix
-
 import pickle
 import numpy as np
 import cv2
 import networkx as nx
 
 from ssc import ssc
-
-#from matplotlib import pyplot as plt
-#from mpl_toolkits.mplot3d import Axes3D
-#from pytransform3d.rotations import *
 
 # camera parameters
 w = 1920
@@ -40,22 +29,22 @@ bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
 fast = cv2.FastFeatureDetector_create(threshold=12)
 num_ret_points = 3000
 tolerance = 0.1
-num_matches = 3000
+num_matches = int(0.8*num_ret_points)  # keep only best 80 % of the matches
 
 lk_params = dict( winSize  = (21, 21),
                   maxLevel = 3,
                   criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
 
 
-def extract_kp_des(current_frame, fast, orb):
-    kp = fast.detect(current_frame, None)
+def extract_kp_des(frame, fast, orb):
+    kp = fast.detect(frame, None)
     kp = sorted(kp, key = lambda x:x.response, reverse=True)
-    kp = ssc(kp, num_ret_points, tolerance, current_frame.shape[1], current_frame.shape[0])
-    kp, des = orb.compute(current_frame, kp)
+    kp = ssc(kp, num_ret_points, tolerance, frame.shape[1], frame.shape[0])
+    kp, des = orb.compute(frame, kp)
     # good features to track lead to cleaner tracks, but much more noisy pose estimates
-    #kp = cv2.goodFeaturesToTrack(current_frame, **feature_params)
+    #kp = cv2.goodFeaturesToTrack(frame, **feature_params)
     #kp = cv2.KeyPoint_convert(kp)
-    #kp, des = orb.compute(current_frame, kp)
+    #kp, des = orb.compute(frame, kp)
     return kp, des
 
 
@@ -97,15 +86,22 @@ def get_frame(cap, mapx, mapy):
     retc, frame = cap.read()
     if not retc:
         raise RuntimeError("Could not read the first camera frame.")
-    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     frame = cv2.remap(frame, mapx, mapy, cv2.INTER_CUBIC)  # undistort frame
     return frame
+
+
+def gray(frame):
+    """Convert BGR frame to gray frame."""
+    frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    return frame_gray
 
 
 cv2.namedWindow("last_keyframe", cv2.WINDOW_NORMAL)
 cv2.resizeWindow("last_keyframe", 1600, 900)
 cv2.namedWindow("current_frame", cv2.WINDOW_NORMAL)
 cv2.resizeWindow("current_frame", 1600, 900)
+cv2.namedWindow("match_frame", cv2.WINDOW_NORMAL)
+cv2.resizeWindow("match_frame", 1600, 900)
 
 step_wise = True
 match_frame = None
@@ -142,7 +138,7 @@ def initialize(fast, orb, camera_matrix, min_parallax=60.0):
 
     # get first key frame
     frame = get_frame(cap, mapx, mapy)
-    kp, des = extract_kp_des(frame, fast, orb)
+    kp, des = extract_kp_des(gray(frame), fast, orb)
     pose_graph.add_node(0, frame=frame, kp=kp, des=des)
 
     frame_idx_init = 0
@@ -151,9 +147,9 @@ def initialize(fast, orb, camera_matrix, min_parallax=60.0):
         frame = get_frame(cap, mapx, mapy)
 
         # extract keypoints and match with first key frame
-        kp, des = extract_kp_des(frame, fast, orb)
+        kp, des = extract_kp_des(gray(frame), fast, orb)
         matches, last_pts, current_pts, match_frame = match(bf,
-            pose_graph.nodes[0]["frame"], frame, pose_graph.nodes[0]["des"],
+            gray(pose_graph.nodes[0]["frame"]), gray(frame), pose_graph.nodes[0]["des"],
             des, pose_graph.nodes[0]["kp"], kp, num_matches, draw=False)
 
         # determine median distance between all matched feature points
@@ -174,9 +170,10 @@ def initialize(fast, orb, camera_matrix, min_parallax=60.0):
     pose_graph.nodes[1]["kp_matched"] = current_pts.reshape(-1, 2)
 
     # compute relative camera pose for second frame
-    essential_mat, _ = cv2.findEssentialMat(last_pts.reshape(1, -1, 2), current_pts.reshape(1, -1, 2), camera_matrix, method=cv2.RANSAC)
+    essential_mat, _ = cv2.findEssentialMat(last_pts.reshape(1, -1, 2), current_pts.reshape(1, -1, 2), camera_matrix, method=cv2.LMEDS)  # RANSAC fails here
     num_inliers, R, t, mask = cv2.recoverPose(essential_mat, last_pts.reshape(1, -1, 2), current_pts.reshape(1, -1, 2), camera_matrix)
     mask = mask.astype(np.bool).reshape(-1,)
+    print(num_inliers)
 
     if num_inliers >= 0.25*current_pts.reshape(1, -1, 2).shape[1]:
         print("init R", R)
@@ -311,8 +308,8 @@ while(True):
     # track matched kps of last key frame
     print("performing tracking")
     p0 = np.float32(previous_kp).reshape(-1, 1, 2)
-    p1, _st, _err = cv2.calcOpticalFlowPyrLK(previous_frame, current_frame, p0, None, **lk_params)
-    p0r, _st, _err = cv2.calcOpticalFlowPyrLK(current_frame, previous_frame, p1, None, **lk_params)  # back-tracking
+    p1, _st, _err = cv2.calcOpticalFlowPyrLK(gray(previous_frame), gray(current_frame), p0, None, **lk_params)
+    p0r, _st, _err = cv2.calcOpticalFlowPyrLK(gray(current_frame), gray(previous_frame), p1, None, **lk_params)  # back-tracking
     d = abs(p0-p0r).reshape(-1, 2).max(-1)
     good = d < 1
     current_kp = p1
@@ -335,7 +332,7 @@ while(True):
     print(pts_3d)
     print(pts_3d.shape)
     print(pts_3d.dtype)
-    print("current_pts before PnP", img_points, "len", img_points.shape)
+    #print("current_pts before PnP", img_points, "len", img_points.shape)
     R_current, t_current = estimate_camera_pose(img_points, pts_3d, camera_matrix)
     current_pose = to_twist(R_current, t_current)
     print(R_current, t_current)
@@ -386,11 +383,14 @@ while(True):
         # insert key frame into pose graph
 
         # extract keypoints of new key frame and match with previous key frame
-        kp_kf_match, des_kf_match = extract_kp_des(kf_candidate_frame, fast, orb)
+        kp_kf_match, des_kf_match = extract_kp_des(gray(kf_candidate_frame), fast, orb)
         prev_node_id = sorted(pose_graph.nodes)[-1]
         matches, last_pts, current_pts, match_frame = match(bf,
-            pose_graph.nodes[prev_node_id]["frame"], kf_candidate_frame, pose_graph.nodes[prev_node_id]["des"],
-            des_kf_match, pose_graph.nodes[prev_node_id]["kp"], kp_kf_match, num_matches, draw=False)
+            gray(pose_graph.nodes[prev_node_id]["frame"]),
+            gray(kf_candidate_frame),
+            pose_graph.nodes[prev_node_id]["des"],
+            des_kf_match, pose_graph.nodes[prev_node_id]["kp"],
+            kp_kf_match, num_matches, draw=False)
 
         R1, t1 = from_twist(pose_graph.nodes[prev_node_id]["pose"])
         R2, t2 = from_twist(kf_candidate_pose)
