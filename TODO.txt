@@ -1,3 +1,25 @@
 - use pyDBoW to retrieve overlapping frames during kf insertion and triangulate new world points from overlap
 - merge world points and add an index to pose graph for the visible world points in each key frame
-- fit plane into map points and project frames onto ground plane
+
+
+0) Improve initialization
+- perform full BA after first two KFs and initial map are estimated
+
+1) Improvement of Frame-to-Frame Pose Estimation
+- match features in current frame with features in last KF
+- get course pose estimate of current frame by solving PnP with 3D map points corresponding to matched features
+- project local submap into current frame
+- find further matches between map point of local submap and features in current frame
+- solve PnP with all matches to get a better pose estimate (or alternatively perform BA with fixed map points)
+
+2) Improvement of KF insertion
+- add additional criteria to KF insertion, e.g. 20 frames must have passed before a new KF is inserted
+- do not perform triangulation of new map points with the previous KF but with the KF that has the most similar pose to the new KF
+- perform epipolar search between the new KF and the reference KF to find additional matches
+- triangulate matches to create new map points
+
+other: Track quality supervision:
+- Monitor quality of tracking with every frame by computing the ratio of matched feature points to total feature points
+- If quality falls below threshold, continue tracking but do not insert new KFs into map
+- If quality is even lower for several subsequent frames, tracking is lost and relocalization needs to be performed
+- Relocalization: B. Williams, G. Klein, and I. Reid. Real-time SLAM relocalisation. In Proc. 11th IEEE International Conference on Computer Vision (ICCV’07), Rio de Janeiro, October 2007.
