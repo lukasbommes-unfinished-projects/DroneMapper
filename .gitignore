@@ -11,3 +11,4 @@ pyDBoW3/ORBvoc.txt
 g2o/docs
 pyg2o
 UMCD/
+experiments/local_pose_estimation/frames
