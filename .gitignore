@@ -1,5 +1,6 @@
 __pycache__/
 
+*.tar
 *.MOV
 *.SRT
 log.txt

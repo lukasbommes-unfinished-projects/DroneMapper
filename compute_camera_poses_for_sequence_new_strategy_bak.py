@@ -176,6 +176,8 @@ match_frame = None
 Rs = []
 ts = []
 
+frame_idx = 0
+
 
 # for testing remove the first part of the video where drone ascends
 #[cap.read() for _ in range(1000)]
@@ -209,7 +211,6 @@ def initialize(fast, orb, camera_matrix, min_parallax=60.0):
 
     while True:
         frame = get_frame(cap, mapx, mapy)
-        frame_idx_init += 1
 
         # extract keypoints and match with first key frame
         kp, des = extract_kp_des(gray(frame), fast, orb)
@@ -226,6 +227,8 @@ def initialize(fast, orb, camera_matrix, min_parallax=60.0):
             pose_graph.add_node(1, frame=frame, kp=kp, des=des)
             break
 
+        frame_idx_init += 1
+
     pose_graph.add_edge(0, 1, num_matches=len(matches))
 
     # separately store the keypoints in matched order for tracking later
@@ -238,49 +241,50 @@ def initialize(fast, orb, camera_matrix, min_parallax=60.0):
     mask = mask.astype(np.bool).reshape(-1,)
     print(num_inliers)
 
-    if num_inliers < 50:
+    if num_inliers >= 0.25*current_pts.reshape(1, -1, 2).shape[1]:
+        print("init R", R)
+        print("init t", t)
+
+        # relative camera pose
+        R1 = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]]).astype(np.float64)
+        t1 = np.array([[0], [0], [0]]).astype(np.float64)
+        R2 = R.T
+        t2 = -np.matmul(R.T, t.reshape(3,)).reshape(3,1)
+
+        # insert pose (in twist coordinates) of KF0 and KF1 into keyframes dict
+        # poses are w.r.t. KF0 which is the base coordinate system of the entire map
+        pose_graph.nodes[0]["pose"] = to_twist(R1, t1)
+        pose_graph.nodes[1]["pose"] = to_twist(R2, t2)
+
+        # create projection matrices needed for triangulation of initial 3D point cloud
+        proj_matrix1 = np.hstack([R1.T, -R1.T.dot(t1)])
+        proj_matrix2 = np.hstack([R2.T, -R2.T.dot(t2)])
+        proj_matrix1 = camera_matrix.dot(proj_matrix1)
+        proj_matrix2 = camera_matrix.dot(proj_matrix2)
+
+        # triangulate initial 3D point cloud
+        pts_3d = cv2.triangulatePoints(proj_matrix1, proj_matrix2, last_pts.reshape(-1, 2).T, current_pts.reshape(-1, 2).T).T
+        pts_3d = cv2.convertPointsFromHomogeneous(pts_3d).reshape(-1, 3)
+
+        # filter outliers based on mask from recoverPose
+        #pts_3d = pts_3d[valid_map_points_mask, :].reshape(-1, 3)
+
+        # add triangulated points to map points
+        associated_kp_indices = [[m.queryIdx, m.trainIdx] for m in matches]
+        map_points.insert(pts_3d, associated_kp_indices, observing_kfs=[0, 1])  # triangulatedmap points between KF0 and KF1
+
+        # Store indices of map points belonging to KF0 and KF1 in pose graph node
+        #pose_graph.nodes[0]["visible_map_points"] = [range(0, pts_3d.shape[0])]
+        #pose_graph.nodes[1]["visible_map_points"] = [range(0, pts_3d.shape[0])]
+
+        print("Initialization successful. Chose frames 0 and {} as key frames".format(frame_idx_init))
+
+    else:
         raise RuntimeError("Could not recover intial camera pose based on selected keyframes. Insufficient parallax or number of feature points.")
-
-    print("init R", R)
-    print("init t", t)
-
-    # relative camera pose
-    R1 = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]]).astype(np.float64)
-    t1 = np.array([[0], [0], [0]]).astype(np.float64)
-    R2 = R.T
-    t2 = -np.matmul(R.T, t.reshape(3,)).reshape(3,1)
-
-    # insert pose (in twist coordinates) of KF0 and KF1 into keyframes dict
-    # poses are w.r.t. KF0 which is the base coordinate system of the entire map
-    pose_graph.nodes[0]["pose"] = to_twist(R1, t1)
-    pose_graph.nodes[1]["pose"] = to_twist(R2, t2)
-
-    # create projection matrices needed for triangulation of initial 3D point cloud
-    proj_matrix1 = np.hstack([R1.T, -R1.T.dot(t1)])
-    proj_matrix2 = np.hstack([R2.T, -R2.T.dot(t2)])
-    proj_matrix1 = camera_matrix.dot(proj_matrix1)
-    proj_matrix2 = camera_matrix.dot(proj_matrix2)
-
-    # triangulate initial 3D point cloud
-    pts_3d = cv2.triangulatePoints(proj_matrix1, proj_matrix2, last_pts.reshape(-1, 2).T, current_pts.reshape(-1, 2).T).T
-    pts_3d = cv2.convertPointsFromHomogeneous(pts_3d).reshape(-1, 3)
-
-    # filter outliers based on mask from recoverPose
-    #pts_3d = pts_3d[valid_map_points_mask, :].reshape(-1, 3)
-
-    # add triangulated points to map points
-    associated_kp_indices = [[m.queryIdx, m.trainIdx] for m in matches]
-    map_points.insert(pts_3d, associated_kp_indices, observing_kfs=[0, 1])  # triangulatedmap points between KF0 and KF1
-
-    # Store indices of map points belonging to KF0 and KF1 in pose graph node
-    #pose_graph.nodes[0]["visible_map_points"] = [range(0, pts_3d.shape[0])]
-    #pose_graph.nodes[1]["visible_map_points"] = [range(0, pts_3d.shape[0])]
-
-    print("Initialization successful. Chose frames 0 and {} as key frames".format(frame_idx_init))
 
     # TODO: perform full BA to optimize initial camera poses and map points [see. ORB_SLAM IV. 5)]
 
-    return pose_graph, map_points, frame_idx_init
+    return pose_graph, map_points
 
 
 def estimate_camera_pose(img_points, pts_3d, camera_matrix):
@@ -330,7 +334,7 @@ def get_map_points_and_kps_for_matches(last_kf_index, matches):
     the current frame.
     """
     # get all map points observed in last KF
-    _, pts_3d, associated_kp_indices = map_points.get_by_observation(last_kf_index)  # get all map points observed by last KF
+    _, _, associated_kp_indices = map_points.get_by_observation(prev_node_id)  # get all map points observed by last KF
     # get indices of map points which were found again in the current frame
     kp_idxs = []
     new_matches = []
@@ -344,14 +348,14 @@ def get_map_points_and_kps_for_matches(last_kf_index, matches):
             new_matches.append(m)
     print("{} of {} ({:3.3f} %) keypoints in last key frame have been found again in current frame".format(len(new_matches), len(matches), len(new_matches)/len(matches)))
     # get map points according to the indices
-    pts_3d = pts_3d[np.array(kp_idxs), :]
+    pts_3d = map_points.pts_3d[np.array(kp_idxs), :]
     # get corresponding key points in the current frame
     img_points = np.array([current_kp[m.trainIdx].pt for m in new_matches]).reshape(-1, 1, 2)
     return pts_3d, img_points
 
 ################################################################################
 
-pose_graph, map_points, frame_idx = initialize(fast, orb, camera_matrix)
+pose_graph, map_points = initialize(fast, orb, camera_matrix)
 
 # maintain a copy of the last frame's data so that we can use it to create a new
 # keyframe once distance threshold is exceeded
@@ -379,11 +383,11 @@ while(True):
         # 3) check which other keyframes share the same keypoints (pyDBoW3)
         # 4) perform BA with local group (new keyframe + keyframes from 1) to adjust pose and 3D point estimates of the local group
 
+        print("frame", frame_idx)
+
         if not last_frame_was_keyframe:
             current_frame = get_frame(cap, mapx, mapy)
             frame_idx += 1
-
-        print("frame", frame_idx)
 
 ### local tracking (initial pose estimate)
 
@@ -399,7 +403,7 @@ while(True):
 
         vis_current_frame = cv2.drawKeypoints(np.copy(current_frame), current_kp, None, flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
 
-        # get the map points and corresponding key points in last KF
+        # recover initial camera pose of current frame by solving PnP
         pts_3d, img_points = get_map_points_and_kps_for_matches(prev_node_id, matches)
 
         # visualize which matches have been selected as image points
@@ -407,7 +411,6 @@ while(True):
         for pt in img_points:
             match_frame = cv2.circle(match_frame, center=(int(w+pt[0, 0]), int(pt[0, 1])), radius=3, color=(0, 0, 0), thickness=-1)
 
-        # recover initial camera pose of current frame by solving PnP
         print(img_points.shape)
         print(pts_3d)
         print(pts_3d.shape)
@@ -416,8 +419,6 @@ while(True):
         R_current, t_current = estimate_camera_pose(img_points, pts_3d, camera_matrix)
         current_pose = to_twist(R_current, t_current)
         print(R_current, t_current)
-
-        assert np.allclose(np.linalg.det(R_current), 1.0), "Determinant of rotation matrix in local tracking is not 1."
 
 ###
 
@@ -479,7 +480,6 @@ while(True):
 
             R1, t1 = from_twist(pose_graph.nodes[prev_node_id]["pose"])
             R2, t2 = from_twist(kf_candidate_pose)
-            print("kf_candidate_pose", kf_candidate_pose)
 
             print("R1, t1", (R1, t1))
             print("R2, t2", (R2, t2))
